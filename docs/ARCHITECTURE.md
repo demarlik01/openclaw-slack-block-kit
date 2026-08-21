@@ -107,7 +107,6 @@ type SlackBlockSendInput = {
   blocks: SlackBlock[];
   accountId?: string;
   threadTs?: string;
-  replyBroadcast?: boolean;
   validateOnly?: boolean;
 };
 ```
@@ -119,7 +118,6 @@ type SlackBlockSendInput = {
 | `blocks` | 예 | Slack Block Kit 블록 배열 |
 | `accountId` | 아니오 | 다중 Slack 계정 선택. 없으면 현재 에이전트 계정 또는 기본 계정 |
 | `threadTs` | 아니오 | Slack 스레드 timestamp |
-| `replyBroadcast` | 아니오 | 스레드 답글을 상위 채널에도 노출. 런타임 지원 여부를 구현 단계에서 확인 |
 | `validateOnly` | 아니오 | 실제 전송 없이 검증 결과만 반환 |
 
 `text`는 blocks에서 자동 생성하지 않고 항상 요구한다. Slack 알림과 접근성에서 최상위 `text`가 중요하고, 모델이 메시지 의도를 가장 정확하게 요약할 수 있기 때문이다.
@@ -165,7 +163,7 @@ TypeBox 스키마가 최상위 계약을 검증한다.
 - 빈 `target`과 `text` 거부
 - `blocks`는 비어 있지 않은 배열
 - `accountId`, `threadTs`는 선택 문자열
-- `validateOnly`, `replyBroadcast`는 선택 boolean
+- `validateOnly`는 선택 boolean
 
 ### 5.2 Block Kit 의미 검증
 
@@ -346,6 +344,6 @@ openclaw-slack-block-kit/
 ## 15. 구현 전 확인 항목
 
 - 설치된 OpenClaw `2026.7.1-2`의 plugin SDK export에서 Slack runtime 타입을 외부 플러그인이 안정적으로 import할 수 있는지 확인
-- `replyBroadcast`를 공개 outbound adapter 계약으로 전달할 수 있는지 확인하고, 없으면 MVP에서 제외
+- `replyBroadcast`는 현재 공개 outbound adapter 계약에 직접 노출되지 않으므로 MVP 범위에서 제외
 - Slack SDK의 Block/element 런타임 스키마 제공 여부 확인; 없으면 자체 validator 범위를 확정
 - 외부 플러그인 패키지에서 `@slack/web-api` 타입을 직접 dependency로 둘지 peer/dev dependency로 둘지 결정

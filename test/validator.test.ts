@@ -46,4 +46,17 @@ describe("validateSlackBlocks", () => {
     const result = validateSlackBlocks([{ type: "future_block" }]);
     expect(result.ok).toBe(false);
   });
+
+  it("rejects excessive nesting", () => {
+    let nested: Record<string, unknown> = { type: "button", action_id: "deep" };
+    for (let index = 0; index < 25; index += 1) {
+      nested = { child: nested };
+    }
+
+    const result = validateSlackBlocks([{ type: "section", text: { type: "mrkdwn", text: "x" }, accessory: nested }]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues.some((issue) => issue.message.includes("nesting depth"))).toBe(true);
+    }
+  });
 });

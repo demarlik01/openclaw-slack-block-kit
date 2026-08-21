@@ -64,4 +64,54 @@ describe("slack_block_send", () => {
 
     expect(sendPayload).not.toHaveBeenCalled();
   });
+
+  it("normalizes Slack rate-limit errors", async () => {
+    const error = Object.assign(new Error("request failed"), {
+      statusCode: 429,
+      headers: { "retry-after": "12" },
+    });
+    const sendPayload = vi.fn(async () => {
+      throw error;
+    });
+    const tool = createSlackBlockSendTool(createApi(sendPayload), { config: {} });
+
+    const result = await tool.execute("call-3", {
+      target: "channel:C123",
+      text: "Ready",
+      blocks: [{ type: "divider" }],
+    });
+
+    expect(result.details).toEqual({
+      ok: false,
+      error: {
+        code: "SLACK_RATE_LIMITED",
+        message: "Slack rate limit exceeded",
+        retryAfter: 12,
+      },
+    });
+  });
+
+  it("returns a structured error when the Slack adapter is unavailable", async () => {
+    const api = {
+      runtime: {
+        config: { current: () => ({}) },
+        channel: { outbound: { loadAdapter: vi.fn(async () => undefined) } },
+      },
+    } as unknown as OpenClawPluginApi;
+    const tool = createSlackBlockSendTool(api, { config: {} });
+
+    const result = await tool.execute("call-4", {
+      target: "channel:C123",
+      text: "Ready",
+      blocks: [{ type: "divider" }],
+    });
+
+    expect(result.details).toEqual({
+      ok: false,
+      error: {
+        code: "SLACK_NOT_CONFIGURED",
+        message: "Slack outbound adapter is unavailable",
+      },
+    });
+  });
 });

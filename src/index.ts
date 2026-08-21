@@ -16,7 +16,7 @@ const plugin = {
     api.registerTool(
       (context) =>
         createSlackBlockSendTool(api, {
-          config: context.config as Record<string, unknown> | undefined,
+          config: context.config,
           agentAccountId: context.agentAccountId,
           messageChannel: context.messageChannel,
         }),

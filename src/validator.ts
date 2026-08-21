@@ -19,6 +19,7 @@ const MAX_BLOCKS = 50;
 const MAX_BLOCK_ID_LENGTH = 255;
 const MAX_ACTION_ID_LENGTH = 255;
 const MAX_TEXT_LENGTH = 3000;
+const MAX_NESTING_DEPTH = 20;
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -44,9 +45,16 @@ function inspectNode(
   path: string,
   actionIds: Set<string>,
   issues: ValidationIssue[],
+  depth = 0,
 ) {
+  if (depth > MAX_NESTING_DEPTH) {
+    issues.push({ path, message: `nesting depth must not exceed ${MAX_NESTING_DEPTH}` });
+    return;
+  }
   if (Array.isArray(value)) {
-    value.forEach((entry, index) => inspectNode(entry, `${path}[${index}]`, actionIds, issues));
+    value.forEach((entry, index) =>
+      inspectNode(entry, `${path}[${index}]`, actionIds, issues, depth + 1),
+    );
     return;
   }
   if (!isObject(value)) return;
@@ -68,7 +76,7 @@ function inspectNode(
 
   for (const [key, nested] of Object.entries(value)) {
     if (key === "action_id") continue;
-    inspectNode(nested, `${path}.${key}`, actionIds, issues);
+    inspectNode(nested, `${path}.${key}`, actionIds, issues, depth + 1);
   }
 }
 

@@ -1,10 +1,11 @@
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import type { OpenClawConfig, OpenClawPluginApi } from "openclaw/plugin-sdk";
+import { normalizeSlackError } from "./errors.js";
 import { SlackBlockSendSchema } from "./schema.js";
 import type { SlackBlockSendInput } from "./types.js";
 import { validateSlackBlocks } from "./validator.js";
 
 type ToolContext = {
-  config?: Record<string, unknown>;
+  config?: OpenClawConfig;
   agentAccountId?: string;
   messageChannel?: string;
 };
@@ -46,44 +47,48 @@ export function createSlackBlockSendTool(api: OpenClawPluginApi, context: ToolCo
         });
       }
 
-      const adapter = await api.runtime.channel.outbound.loadAdapter("slack");
-      if (!adapter?.sendPayload) {
-        return jsonResult({
-          ok: false,
-          error: {
-            code: "SLACK_NOT_CONFIGURED",
-            message: "Slack outbound adapter is unavailable",
-          },
-        });
-      }
+      try {
+        const adapter = await api.runtime.channel.outbound.loadAdapter("slack");
+        if (!adapter?.sendPayload) {
+          return jsonResult({
+            ok: false,
+            error: {
+              code: "SLACK_NOT_CONFIGURED",
+              message: "Slack outbound adapter is unavailable",
+            },
+          });
+        }
 
-      const cfg = (context.config ?? api.runtime.config.current()) as Parameters<
-        NonNullable<typeof adapter.sendPayload>
-      >[0]["cfg"];
-      const accountId = input.accountId ?? context.agentAccountId;
-      const result = await adapter.sendPayload({
-        cfg,
-        to: input.target,
-        text: input.text,
-        accountId,
-        threadId: input.threadTs,
-        payload: {
+        // current() is the trusted runtime snapshot. The adapter only reads cfg,
+        // although its public context type is not declared readonly.
+        const cfg = (context.config ?? api.runtime.config.current()) as OpenClawConfig;
+        const accountId = input.accountId ?? context.agentAccountId;
+        const result = await adapter.sendPayload({
+          cfg,
+          to: input.target,
           text: input.text,
-          channelData: {
-            slack: {
-              blocks: input.blocks,
+          accountId,
+          threadId: input.threadTs,
+          payload: {
+            text: input.text,
+            channelData: {
+              slack: {
+                blocks: input.blocks,
+              },
             },
           },
-        },
-      });
+        });
 
-      return jsonResult({
-        ok: true,
-        messageId: result.messageId,
-        channelId: result.channelId ?? result.chatId,
-        blockCount: input.blocks.length,
-        warnings: validation.warnings,
-      });
+        return jsonResult({
+          ok: true,
+          messageId: result.messageId,
+          channelId: result.channelId ?? result.chatId,
+          blockCount: input.blocks.length,
+          warnings: validation.warnings,
+        });
+      } catch (error) {
+        return jsonResult({ ok: false, error: normalizeSlackError(error) });
+      }
     },
   };
 }
