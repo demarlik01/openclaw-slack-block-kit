@@ -1,8 +1,7 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
-export const SlackBlockSendSchema = Type.Object(
+const SlackMessageSchema = Type.Object(
   {
-    target: Type.String({ minLength: 1, description: "Slack target, preferably channel:C… or user:U…" }),
     text: Type.String({
       minLength: 1,
       maxLength: 4000,
@@ -13,8 +12,17 @@ export const SlackBlockSendSchema = Type.Object(
       maxItems: 50,
       description: "Raw Slack Block Kit blocks",
     }),
-    accountId: Type.Optional(Type.String({ minLength: 1 })),
-    threadTs: Type.Optional(Type.String({ pattern: "^[0-9]+\\.[0-9]+$" })),
+  },
+  { additionalProperties: false },
+);
+
+export const SlackBlocksSendSchema = Type.Object(
+  {
+    messages: Type.Array(SlackMessageSchema, {
+      minItems: 1,
+      maxItems: 10,
+      description: "Ordered Slack messages sent to the current conversation and thread",
+    }),
     validateOnly: Type.Optional(Type.Boolean()),
   },
   { additionalProperties: false },
