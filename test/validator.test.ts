@@ -125,6 +125,55 @@ describe("validateSlackMessages", () => {
     }
   });
 
+  it("rejects non-string URL-bearing fields", () => {
+    const result = validateSlackMessages([
+      {
+        text: "Image",
+        blocks: [
+          {
+            type: "image",
+            image_url: 123,
+            alt_text: "Image",
+          },
+        ],
+      },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toContainEqual({
+        path: "messages[0].blocks[0].image_url",
+        message: "must be a non-empty https URL string",
+      });
+    }
+  });
+
+  it("rejects null, collection, blank, and nested non-string URL-bearing fields", () => {
+    const invalidValues = [null, [], {}, "   "];
+
+    for (const [index, invalidValue] of invalidValues.entries()) {
+      const result = validateSlackMessages([
+        {
+          text: "Image",
+          blocks: [
+            {
+              type: "future_display_block",
+              nested: { image_url: invalidValue },
+            },
+          ],
+        },
+      ]);
+
+      expect(result.ok, `invalid value at index ${index}`).toBe(false);
+      if (!result.ok) {
+        expect(result.issues).toContainEqual({
+          path: "messages[0].blocks[0].nested.image_url",
+          message: "must be a non-empty https URL string",
+        });
+      }
+    }
+  });
+
   it("rejects more than 50 blocks", () => {
     const result = validateSlackMessages([
       {

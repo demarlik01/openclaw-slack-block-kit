@@ -14,6 +14,7 @@ presentation으로 표현하기 어려운 Slack message-surface UI를 위한 esc
 - 메시지 1~10개 batch
 - OpenClaw durable outbound queue와 receipt 재사용
 - display-only raw blocks
+- 완전 성공 시 `NO_REPLY`와 Slack-only exact-run safety hook으로 중복 plain-text final 억제
 - button/select, modal, App Home, external select, file/video lifecycle은 제외
 
 설계와 정확한 지원 경계는 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)를 참고하세요.
@@ -73,3 +74,9 @@ openclaw plugins install --link /absolute/path/to/openclaw-slack-block-kit
 
 설치 후 Gateway를 재시작하고 `openclaw plugins inspect slack-block-kit --runtime`에서
 `slack_blocks_send`가 등록되는지 확인합니다.
+
+실제 전송이 완전히 성공하면 도구는 이미 사용자에게 보이는 결과가 전달됐음을 모델에 알리고
+`NO_REPLY`를 요구합니다. 플러그인은 같은 exact `runId`에서 성공한 `slack_blocks_send`만
+사용된 경우에 한해 plain-text final을 추가로 억제합니다. 다른 도구를 함께 쓴 run, 검증·부분
+실패·전송 실패, host notice, rich payload, provider/runtime 오류 final은 숨기지 않으므로 모델이나
+운영자가 복구할 수 있습니다.

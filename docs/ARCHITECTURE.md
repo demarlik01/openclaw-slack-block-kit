@@ -37,7 +37,7 @@ modal / App Home / external select / file·video workflow 필요
 - OpenClaw의 기존 Slack 인증, 대상 해석, hook, queue, receipt, unknown-send 복구 재사용
 - 전송 전 최소 구조·자원·보안 검증
 - sent, suppressed, partial failure, failed 결과를 구분해 반환
-- 성공한 직접 전송 뒤 중복 일반 답변을 줄이기 위한 `terminate: true` 사용
+- 성공한 직접 전송 뒤 exact `runId`로 중복 일반 최종응답 억제
 
 ### 비목표
 
@@ -132,6 +132,10 @@ type SlackBlocksSendInput = {
       "channelId": "C12345678"
     }
   ],
+  "nextAction": {
+    "type": "silent_final",
+    "token": "NO_REPLY"
+  },
   "warnings": []
 }
 ```
@@ -270,7 +274,8 @@ sequenceDiagram
 5. JSON 안전성
    - 순환 참조나 직렬화 불가능 값 거부
 6. URL guard
-   - `url`, `image_url`, `thumb_url`은 유효한 `https:` URL만 허용
+   - `url`, `image_url`, `thumb_url`은 비어 있지 않은 문자열이어야 함
+   - 문자열 값은 유효한 `https:` URL만 허용
 
 ### 검증하지 않는 것
 
@@ -304,29 +309,55 @@ v2에서 raw interaction을 추가할 때는 다음 조건을 모두 만족해�
 ## 11. 중복 최종응답 억제
 
 raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성공한 실제 전송 결과는
-`terminate: true`를 반환해 모델이 같은 내용을 일반 텍스트로 다시 보내는 것을 줄인다.
+다음 두 계층으로 중복 일반 답변을 막는다.
 
-주의할 점:
+1. 도구 결과
+   - 모든 결과는 `terminate: false`다.
+   - 전체 payload의 platform receipt가 확인된 `sent` 결과만 `nextAction`으로 정확한 `NO_REPLY`를
+     요구한다.
+2. delivery safety hook
+   - `after_tool_call`에서 같은 run의 모든 tool completion을 관찰한다.
+   - 해당 run에서 관찰된 호출이 전부 `ok: true`, `status: sent`, `complete: true`인
+     `slack_blocks_send`일 때만 suppression eligible이다.
+   - 다른 도구, 검증 전용, 실패·부분 성공 호출을 하나라도 관찰하면 해당 run은 TTL 동안
+     sticky하게 ineligible이며, 나중의 성공한 Slack 호출이 다시 활성화하지 못한다.
+   - event와 context가 함께 제공한 `runId`가 다르거나 exact `runId`가 없으면 기록하지 않는다.
+   - plugin-owned `Map`은 5분 TTL과 최대 1,024개 제한을 두며 session key로 대체 상관관계하지
+     않는다.
+   - 같은 exact `runId`의 `reply_payload_sending(kind=final)` 중 비어 있지 않은 plain text만
+     낮은 우선순위에서 취소한다.
+   - final이 여러 payload로 분할될 수 있으므로 첫 취소 뒤 marker를 소비하지 않는다.
+   - error, fallback/compaction/status, reasoning/commentary, media/presentation/interactive,
+     channel-specific, 빈 text, 알 수 없는 미래 payload는 모두 fail-open한다.
+   - marker는 TTL/용량 pruning, Gateway stop, plugin runtime reset/delete/reload cleanup에서 제거한다.
 
-- `terminate`는 런타임 hint이며 별도 `NO_REPLY` 문자열 규약에 의존하지 않는다.
-- 한 모델 turn에서 여러 도구가 함께 실행되면 모든 최종 tool result가 terminate를 설정해야 조기
-  종료된다.
-- 검증 전용, suppressed, partial failure, failed 결과는 terminate하지 않는다. 모델이 사용자에게
-  설명하거나 복구할 기회를 남긴다.
+`api.runContext`는 run 종료 시 지워지고 outer final delivery hook보다 먼저 없어질 수 있으므로 이
+상관관계 저장소에 사용하지 않는다. 이 hook은 exact run metadata가 있는 live dispatcher의
+마지막 안전망일 뿐이다. durable route/follow-up처럼 run metadata가 없는 경로는 도구 결과의
+`NO_REPLY` 계약에 의존한다. event/context의 run 또는 session 정보가 충돌하거나 marker가
+만료된 경우에도 fail-open하여 final을 보낸다.
+
+이 구조는 OpenClaw `2026.7.1-2` live smoke에서 확인된 문제를 바로잡는다. 커스텀 도구의
+`terminate: true`는 core message delivery 완료로 집계되지 않아 run이
+`incomplete_turn / abandoned`로 끝나고 `Agent couldn't generate a response`가 추가 전송될 수
+있었다. `terminate`에 의존하지 않고 정상적인 silent final 경로를 완료한 뒤, hook은 모델이 규약을
+어겼을 때 Slack-only run에서 생기는 plain-text duplicate final만 막는 안전망으로 둔다.
 
 ## 12. 오류와 내구성 모델
 
 도구는 다음 상태를 구분한다.
 
-| 상태 | 의미 | terminate |
-|---|---|---:|
-| `validated` | 검증만 완료, 외부 전송 없음 | false |
-| `sent` | 모든 payload의 플랫폼 receipt 확인 (`complete: true`) | true |
-| `partial_suppressed` | 일부 payload는 전송되고 일부는 hook/정책으로 억제 | false |
-| `incomplete_sent` | top-level send는 성공했지만 모든 payload의 완료를 증명하지 못함 | false |
-| `suppressed` | hook/정책에 의해 의도적으로 미전송 | false |
-| `partial_failed` | 일부 전송 후 후속 payload 실패 | false |
-| `failed` | 플랫폼 receipt 없이 실패 | false |
+| 상태 | 의미 | 완료 marker / 모델 후속 |
+|---|---|---|
+| `validated` | 검증만 완료, 외부 전송 없음 | 없음 / 정상 응답 |
+| `sent` | 모든 payload의 플랫폼 receipt 확인 (`complete: true`) | 기록 / `NO_REPLY` |
+| `partial_suppressed` | 일부 payload는 전송되고 일부는 hook/정책으로 억제 | 없음 / 설명·복구 |
+| `incomplete_sent` | top-level send는 성공했지만 모든 payload의 완료를 증명하지 못함 | 없음 / 설명·복구 |
+| `suppressed` | hook/정책에 의해 의도적으로 미전송 | 없음 / 설명·복구 |
+| `partial_failed` | 일부 전송 후 후속 payload 실패 | 없음 / 설명·복구 |
+| `failed` | 플랫폼 receipt 없이 실패 | 없음 / 설명·복구 |
+
+모든 상태의 tool result 자체는 `terminate: false`다.
 
 Slack rate limit이면 `retryAfter`를 보존한다. Slack API 오류 문자열은 구조화하되 token, 전체
 payload, 내부 stack은 model-facing 결과에 포함하지 않는다.
@@ -343,8 +374,9 @@ native durable queue는 platform send 전후의 crash와 unknown-send 복구를 
 - raw blocks와 Slack 오류 전체를 로그에 남기지 않는다.
 - validation issue는 최대 50개까지만 반환한다.
 - tool은 optional로 등록하고 명시적으로 allowlist된 에이전트에서만 사용한다.
-- 플러그인은 URL-bearing field에 `https:`를 강제한다. 허용 도메인과 이미지 출처 정책은
-  producer가 책임지며, 민감한 서명 URL을 tool result에 재출력하지 않는다.
+- 플러그인은 URL-bearing field가 있을 때 비어 있지 않은 문자열인지 확인하고 `https:`를 강제한다. 허용
+  도메인과 이미지 출처 정책은 producer가 책임지며, 민감한 서명 URL을 tool result에 재출력하지
+  않는다.
 
 ## 14. 프로젝트 구조
 
@@ -355,13 +387,15 @@ openclaw-slack-block-kit/
 ├── src/
 │   ├── index.ts              # defineToolPlugin entry
 │   ├── tool.ts               # current-route durable tool
+│   ├── completion.ts         # exact-run final completion safety net
 │   ├── schema.ts             # TypeBox envelope
 │   ├── validator.ts          # 최소 guard validation
 │   ├── errors.ts             # 안전한 오류 정규화
 │   └── types.ts              # 내부 결과 타입
 ├── test/
 │   ├── metadata.test.ts      # plugin metadata/manifest 계약
-│   ├── tool.test.ts          # route, durable outcome, terminate
+│   ├── completion.test.ts    # run correlation, fail-open, bounded cleanup
+│   ├── tool.test.ts          # route, durable outcome, silent-final result
 │   └── validator.test.ts     # resource/scope guard
 ├── openclaw.plugin.json
 ├── package.json
@@ -380,7 +414,13 @@ openclaw-slack-block-kit/
 - 50개 초과, 크기, 깊이, duplicate id 거부
 - v1 interactive와 input block 거부
 - sent/suppressed/partial_failed/failed 결과 매핑
-- 성공 시에만 terminate
+- 모든 tool result가 `terminate: false`
+- 완전 성공한 Slack-only run에만 `NO_REPLY` next action과 exact-run completion eligibility 생성
+- 같은 run의 다른/실패/검증 tool completion은 sticky하게 suppression 무효화
+- missing/mismatched run, session 충돌, host notice, rich/unknown/error final은 fail-open
+- 여러 final chunk 억제, marker TTL·최대 개수, lifecycle cleanup
+- 빈 `payloadOutcomes`의 legacy flat-results fallback과 incomplete-send 무음 금지
+- URL-bearing field의 비문자·빈 값·non-HTTPS 거부
 
 ### 정적·런타임 검증
 
@@ -404,6 +444,11 @@ metadata/`contracts.tools` 일치를 검사해야 한다.
 5. 두 메시지 batch 순서 확인
 6. 잘못된 block으로 Slack API 오류 정규화 확인
 7. 직접 전송 뒤 중복 plain final reply가 없는지 확인
+8. 자동 전달 run이 `incomplete_turn / abandoned` 없이 끝나고 fallback 오류 메시지가 없는지 확인
+
+정확한 `NO_REPLY`로 visible final이 0개가 된 성공 run에서는 OpenClaw 진단 로그에
+`zero-count-visible-dispatch`가 남을 수 있다. 사용자에게 fallback/error 메시지가 전송되지 않고
+run이 정상 완료되었다면 이는 예상 가능한 진단이며 smoke 실패로 보지 않는다.
 
 실제 계정이 없는 CI에서는 adapter 경계까지 검증하고, live smoke는 release checklist로 유지한다.
 
@@ -418,7 +463,7 @@ metadata/`contracts.tools` 일치를 검사해야 한다.
 - minimal guard validator
 - `sendDurableMessageBatch`
 - structured partial outcome
-- success-only terminate
+- complete-send `NO_REPLY` + bounded Slack-only exact-run plain-text suppression
 
 ### v1.1 — producer 연동
 

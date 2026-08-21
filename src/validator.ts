@@ -124,14 +124,18 @@ function inspectNode(params: {
   }
 
   for (const [key, nested] of Object.entries(value)) {
-    if (URL_KEYS.has(key) && typeof nested === "string") {
-      try {
-        const url = new URL(nested);
-        if (url.protocol !== "https:") {
-          issues.push({ path: `${path}.${key}`, message: "must use https" });
+    if (URL_KEYS.has(key)) {
+      if (typeof nested !== "string" || nested.trim().length === 0) {
+        issues.push({ path: `${path}.${key}`, message: "must be a non-empty https URL string" });
+      } else {
+        try {
+          const url = new URL(nested);
+          if (url.protocol !== "https:") {
+            issues.push({ path: `${path}.${key}`, message: "must use https" });
+          }
+        } catch {
+          issues.push({ path: `${path}.${key}`, message: "must be a valid https URL" });
         }
-      } catch {
-        issues.push({ path: `${path}.${key}`, message: "must be a valid https URL" });
       }
     }
 

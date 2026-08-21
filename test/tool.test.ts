@@ -85,15 +85,67 @@ describe("slack_blocks_send", () => {
         }),
       }),
     );
-    expect(result.terminate).toBe(true);
+    expect(result.terminate).toBe(false);
     expect(result.details).toEqual(
       expect.objectContaining({
         ok: true,
         status: "sent",
         complete: true,
         sent: [{ index: 0, messageId: "1.23", channelId: "C123" }],
+        nextAction: expect.objectContaining({
+          type: "silent_final",
+          token: "NO_REPLY",
+        }),
       }),
     );
+  });
+
+  it("treats an empty payloadOutcomes array as the legacy flat-results shape", async () => {
+    const platformResult = {
+      channel: "slack",
+      messageId: "1.24",
+      channelId: "C123",
+    };
+    const sendBatch = vi.fn(async () => ({
+      status: "sent",
+      results: [platformResult],
+      receipt: { id: "receipt-empty-outcomes", parts: [] },
+      payloadOutcomes: [],
+    }));
+    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+
+    const result = await tool.execute("call-empty-outcomes", { messages });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        ok: true,
+        status: "sent",
+        complete: true,
+        sent: [{ index: 0, messageId: "1.24", channelId: "C123" }],
+        nextAction: expect.objectContaining({ token: "NO_REPLY" }),
+      }),
+    );
+  });
+
+  it("does not request a silent final when a sent outcome is incomplete", async () => {
+    const sendBatch = vi.fn(async () => ({
+      status: "sent",
+      results: [],
+      receipt: { id: "receipt-incomplete", parts: [] },
+      payloadOutcomes: [],
+    }));
+    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+
+    const result = await tool.execute("call-incomplete", { messages });
+
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        ok: false,
+        status: "incomplete_sent",
+        complete: false,
+      }),
+    );
+    expect(result.details).not.toHaveProperty("nextAction");
   });
 
   it("does not send in validate-only mode", async () => {

@@ -37,11 +37,11 @@ type PayloadOutcome =
       stage: string;
     };
 
-function jsonResult(value: unknown, terminate = false) {
+function jsonResult(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     details: value,
-    terminate,
+    terminate: false,
   };
 }
 
@@ -112,7 +112,7 @@ function isCompleteSend(params: {
   if (params.suppressed.length > 0 || params.failed.length > 0) {
     return false;
   }
-  if (!params.outcome.payloadOutcomes) {
+  if (!params.outcome.payloadOutcomes || params.outcome.payloadOutcomes.length === 0) {
     return params.sent.length >= params.expectedMessageCount;
   }
   const sentIndices = new Set(params.sent.map((item) => item.index));
@@ -238,16 +238,23 @@ export function createSlackBlocksSendTool(
             : summary.suppressed.length > 0
               ? "partial_suppressed"
               : "incomplete_sent";
-          return jsonResult(
-            {
-              ok: complete,
-              status,
-              complete,
-              ...summary,
-              warnings: validation.warnings,
-            },
+          return jsonResult({
+            ok: complete,
+            status,
             complete,
-          );
+            ...summary,
+            warnings: validation.warnings,
+            ...(complete
+              ? {
+                  nextAction: {
+                    type: "silent_final",
+                    token: "NO_REPLY",
+                    instruction:
+                      "The Block Kit message is already visible. Return exactly NO_REPLY with no other text.",
+                  },
+                }
+              : {}),
+          });
         }
 
         if (outcome.status === "suppressed") {
