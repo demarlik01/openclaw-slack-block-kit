@@ -263,6 +263,9 @@ sequenceDiagram
 
 1. TypeBox envelope
    - `messages`, `text`, `blocks`, `validateOnly`의 기본 타입과 개수
+   - host/bridge가 schema validation을 강제한다고 가정하지 않고 tool 실행 진입점에서 같은
+     TypeBox schema를 다시 검사한다. flat `text`/`blocks`, 누락된 `messages`, 추가 필드는
+     `INVALID_ARGUMENT`으로 구조화해 거부하며 durable sender는 호출하지 않는다.
 2. 런타임 자원 guard
    - block 수, 직렬화 크기, 중첩 깊이
 3. 공통 식별자 guard

@@ -3,6 +3,7 @@ import type {
   OpenClawPluginToolContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
+import { Check, Errors } from "typebox/value";
 import {
   buildOutboundSessionContext,
   sendDurableMessageBatch,
@@ -43,6 +44,68 @@ function jsonResult(value: unknown) {
     details: value,
     terminate: false,
   };
+}
+
+function parseToolInput(rawInput: unknown):
+  | { ok: true; input: SlackBlocksSendInput }
+  | { ok: false; issues: ValidationIssue[] } {
+  if (Check(SlackBlocksSendSchema, rawInput)) {
+    return { ok: true, input: rawInput };
+  }
+
+  const issues: ValidationIssue[] = [];
+  for (const error of Errors(SlackBlocksSendSchema, rawInput)) {
+    if (issues.length >= 50) {
+      break;
+    }
+
+    const basePath = error.instancePath
+      .split("/")
+      .slice(1)
+      .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"))
+      .reduce(
+        (path, segment) =>
+          /^\d+$/.test(segment)
+            ? `${path}[${segment}]`
+            : path.length > 0
+              ? `${path}.${segment}`
+              : segment,
+        "",
+      );
+
+    if (error.keyword === "required") {
+      for (const property of error.params.requiredProperties) {
+        if (issues.length >= 50) {
+          break;
+        }
+        issues.push({
+          path: basePath.length > 0 ? `${basePath}.${property}` : property,
+          message: "is required",
+        });
+      }
+      continue;
+    }
+
+    if (error.keyword === "additionalProperties") {
+      for (const property of error.params.additionalProperties) {
+        if (issues.length >= 50) {
+          break;
+        }
+        issues.push({
+          path: basePath.length > 0 ? `${basePath}.${property}` : property,
+          message: "is not supported",
+        });
+      }
+      continue;
+    }
+
+    issues.push({
+      path: basePath.length > 0 ? basePath : "$",
+      message: error.message,
+    });
+  }
+
+  return { ok: false, issues };
 }
 
 function summarizeOutcomes(
@@ -132,6 +195,19 @@ function validationFailure(issues: ValidationIssue[], warnings: ValidationIssue[
   });
 }
 
+function inputFailure(issues: ValidationIssue[]) {
+  return jsonResult({
+    ok: false,
+    status: "failed",
+    error: {
+      code: "INVALID_ARGUMENT",
+      message: "Tool input validation failed",
+      issues: issues.slice(0, 50),
+    },
+    warnings: [],
+  });
+}
+
 export function createSlackBlocksSendTool(
   api: OpenClawPluginApi,
   context: OpenClawPluginToolContext,
@@ -141,10 +217,15 @@ export function createSlackBlocksSendTool(
     name: "slack_blocks_send",
     label: "Slack Block Kit send",
     description:
-      "Send one or more display-only raw Slack Block Kit messages to the current Slack conversation and thread. Prefer core presentation for portable cards.",
+      'Send display-only raw Slack Block Kit to the current Slack conversation. Use {"messages":[{"text":"fallback","blocks":[...]}],"validateOnly":false}; text and blocks are never top-level fields.',
     parameters: SlackBlocksSendSchema,
     async execute(_id: string, rawInput: unknown, signal?: AbortSignal) {
-      const input = rawInput as SlackBlocksSendInput;
+      const parsedInput = parseToolInput(rawInput);
+      if (!parsedInput.ok) {
+        return inputFailure(parsedInput.issues);
+      }
+
+      const input = parsedInput.input;
       const validation = validateSlackMessages(input.messages);
       if (!validation.ok) {
         return validationFailure(validation.issues, validation.warnings);

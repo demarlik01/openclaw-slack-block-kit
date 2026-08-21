@@ -6,6 +6,39 @@ import {
 } from "../src/validator.js";
 
 describe("validateSlackMessages", () => {
+  it("rejects a missing or malformed message collection without throwing", () => {
+    for (const value of [undefined, null, "messages", {}, 1]) {
+      const result = validateSlackMessages(value);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.issues).toContainEqual({
+          path: "messages",
+          message: "must be an array",
+        });
+      }
+    }
+  });
+
+  it("rejects non-object messages and unsupported envelope fields", () => {
+    const result = validateSlackMessages([
+      null,
+      "message",
+      { text: "Ready", blocks: [{ type: "divider" }], fallbackText: "legacy" },
+    ]);
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.issues).toEqual(
+        expect.arrayContaining([
+          { path: "messages[0]", message: "must be an object" },
+          { path: "messages[1]", message: "must be an object" },
+          { path: "messages[2].fallbackText", message: "is not supported" },
+        ]),
+      );
+    }
+  });
+
   it("accepts display-only blocks and passes unknown future blocks with a warning", () => {
     const result = validateSlackMessages([
       {

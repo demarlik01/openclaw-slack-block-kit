@@ -1,8 +1,4 @@
-import type {
-  SlackMessageInput,
-  ValidationIssue,
-  ValidationResult,
-} from "./types.js";
+import type { ValidationIssue, ValidationResult } from "./types.js";
 
 const KNOWN_DISPLAY_BLOCK_TYPES = new Set([
   "context",
@@ -152,10 +148,18 @@ function inspectNode(params: {
   }
 }
 
-export function validateSlackMessages(messages: SlackMessageInput[]): ValidationResult {
+export function validateSlackMessages(messages: unknown): ValidationResult {
   const issues: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
   let totalSerializedBytes = 0;
+
+  if (!Array.isArray(messages)) {
+    return {
+      ok: false,
+      issues: [{ path: "messages", message: "must be an array" }],
+      warnings,
+    };
+  }
 
   if (messages.length === 0) {
     issues.push({ path: "messages", message: "must contain at least one message" });
@@ -166,6 +170,17 @@ export function validateSlackMessages(messages: SlackMessageInput[]): Validation
 
   messages.forEach((message, messageIndex) => {
     const messagePath = `messages[${messageIndex}]`;
+
+    if (!isObject(message)) {
+      issues.push({ path: messagePath, message: "must be an object" });
+      return;
+    }
+
+    for (const key of Object.keys(message)) {
+      if (key !== "text" && key !== "blocks") {
+        issues.push({ path: `${messagePath}.${key}`, message: "is not supported" });
+      }
+    }
 
     if (typeof message.text !== "string" || message.text.trim().length === 0) {
       issues.push({ path: `${messagePath}.text`, message: "must be a non-empty string" });

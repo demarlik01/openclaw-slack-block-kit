@@ -12,7 +12,7 @@ const plugin = defineToolPlugin({
       name: "slack_blocks_send",
       label: "Slack Block Kit send",
       description:
-        "Send one or more display-only raw Slack Block Kit messages to the current Slack conversation and thread. Prefer the core message tool with presentation for portable text/context/divider/buttons/select cards. Use this optional tool only for Slack-only message layouts such as image accessories, precise fields, rich_text, table, or data_visualization. Call it as the final standalone tool. After a complete send, return exactly NO_REPLY with no other text because the visible response was already delivered.",
+        'Send one or more display-only raw Slack Block Kit messages to the current Slack conversation and thread. Arguments must use {"messages":[{"text":"fallback","blocks":[...]}],"validateOnly":false}; never put text or blocks at the top level. Prefer the core message tool with presentation for portable text/context/divider/buttons/select cards. Use this optional tool only for Slack-only message layouts such as image accessories, precise fields, rich_text, table, or data_visualization. Call it as the final standalone tool. After a complete send, return exactly NO_REPLY with no other text because the visible response was already delivered.',
       parameters: SlackBlocksSendSchema,
       optional: true,
       factory({ api, toolContext }) {

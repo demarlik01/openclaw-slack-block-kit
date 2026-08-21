@@ -49,6 +49,131 @@ const messages = [
 ];
 
 describe("slack_blocks_send", () => {
+  it.each([
+    ["missing input", undefined],
+    ["null input", null],
+    ["array input", []],
+    ["missing messages", {}],
+    ["non-array messages", { messages: "Ready" }],
+    ["non-boolean validateOnly", { messages, validateOnly: "yes" }],
+    ["null message", { messages: [null] }],
+    ["primitive message", { messages: ["Ready"] }],
+    ["empty message", { messages: [{}] }],
+    ["missing blocks", { messages: [{ text: "Ready" }] }],
+    ["primitive block", { messages: [{ text: "Ready", blocks: [null] }] }],
+    ["empty batch", { messages: [] }],
+    ["oversized batch", { messages: Array.from({ length: 11 }, () => messages[0]) }],
+    [
+      "oversized block batch",
+      {
+        messages: [
+          {
+            text: "Ready",
+            blocks: Array.from({ length: 51 }, () => ({ type: "divider" })),
+          },
+        ],
+      },
+    ],
+  ])("returns INVALID_ARGUMENT for %s without sending", async (_label, rawInput) => {
+    const sendBatch = vi.fn();
+    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+
+    const result = await tool.execute("call-invalid-input", rawInput);
+
+    expect(sendBatch).not.toHaveBeenCalled();
+    expect(result.terminate).toBe(false);
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        ok: false,
+        status: "failed",
+        error: expect.objectContaining({ code: "INVALID_ARGUMENT" }),
+      }),
+    );
+  });
+
+  it("returns actionable issues for the malformed live flattened shape", async () => {
+    const sendBatch = vi.fn();
+    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+
+    const result = await tool.execute("call-flat-live-shape", {
+      fallbackText: "Ready",
+      blocks: [{ type: "divider" }],
+      validateOnly: false,
+    });
+
+    expect(sendBatch).not.toHaveBeenCalled();
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          code: "INVALID_ARGUMENT",
+          issues: expect.arrayContaining([
+            { path: "messages", message: "is required" },
+            { path: "fallbackText", message: "is not supported" },
+            { path: "blocks", message: "is not supported" },
+          ]),
+        }),
+      }),
+    );
+  });
+
+  it("caps schema validation issues before returning them", async () => {
+    const sendBatch = vi.fn();
+    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const rawInput = Object.fromEntries(
+      Array.from({ length: 100 }, (_, index) => [`unexpected${index}`, index]),
+    );
+
+    const result = await tool.execute("call-many-schema-issues", rawInput);
+    const details = result.details as {
+      error: { code: string; issues: unknown[] };
+    };
+
+    expect(sendBatch).not.toHaveBeenCalled();
+    expect(details.error.code).toBe("INVALID_ARGUMENT");
+    expect(details.error.issues).toHaveLength(50);
+  });
+
+  it("returns INVALID_BLOCK_KIT for a JSON-unsafe block value without sending", async () => {
+    const sendBatch = vi.fn();
+    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+
+    const result = await tool.execute("call-json-unsafe", {
+      messages: [
+        {
+          text: "Ready",
+          blocks: [{ type: "future_display_block", value: 1n }],
+        },
+      ],
+    });
+
+    expect(sendBatch).not.toHaveBeenCalled();
+    expect(result.terminate).toBe(false);
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "INVALID_BLOCK_KIT" }),
+      }),
+    );
+  });
+
+  it("returns INVALID_BLOCK_KIT for a circular block without sending", async () => {
+    const sendBatch = vi.fn();
+    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const circularBlock: Record<string, unknown> = { type: "future_display_block" };
+    circularBlock.self = circularBlock;
+
+    const result = await tool.execute("call-circular-block", {
+      messages: [{ text: "Ready", blocks: [circularBlock] }],
+    });
+
+    expect(sendBatch).not.toHaveBeenCalled();
+    expect(result.terminate).toBe(false);
+    expect(result.details).toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "INVALID_BLOCK_KIT" }),
+      }),
+    );
+  });
+
   it("inherits the current Slack route and uses durable batch delivery", async () => {
     const platformResult = {
       channel: "slack",
