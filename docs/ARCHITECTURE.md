@@ -36,8 +36,10 @@ modal / App Home / external select / file·video workflow 필요
 - 각 메시지에 필수 fallback `text`와 raw `blocks` 전달
 - OpenClaw의 기존 Slack 인증, 대상 해석, hook, queue, receipt, unknown-send 복구 재사용
 - 전송 전 최소 구조·자원·보안 검증
-- sent, suppressed, partial failure, failed 결과를 구분해 반환
-- 성공한 직접 전송 뒤 exact `runId`로 중복 일반 최종응답 억제
+- validated, sent, suppressed, partial_suppressed, incomplete_sent, partial_failed, failed 결과를
+  구분해 반환
+- 자동 final delivery와 exact `runId` metadata가 있는 경로에서 성공한 직접 전송 뒤 중복
+  plain-text 최종응답 억제
 
 ### 비목표
 
@@ -171,14 +173,21 @@ type SlackBlocksSendInput = {
 
 ## 6. 플러그인 등록
 
-이 프로젝트는 tool-only plugin이므로 `defineToolPlugin`을 사용한다.
+이 프로젝트는 optional tool을 주 surface로 제공하고, 성공한 직접 전송의 completion만 다루는
+좁은 범위의 hooks를 함께 등록한다. 도구 선언과 generated manifest metadata에는
+`defineToolPlugin`을 사용한다.
 
 ```text
-defineToolPlugin
-  └─ static tool: slack_blocks_send (optional)
-       └─ factory(toolContext)
-            ├─ Slack surface가 아니면 null
-            └─ Slack이면 현재 deliveryContext를 캡처한 tool 반환
+plugin.register
+  ├─ defineToolPlugin.register
+  │    └─ static tool: slack_blocks_send (optional)
+  │         └─ factory(toolContext)
+  │              ├─ Slack surface가 아니면 null
+  │              └─ Slack이면 현재 deliveryContext를 캡처한 tool 반환
+  └─ registerCompletionHooks
+       ├─ after_tool_call: exact run/tool completion 관찰
+       ├─ reply_payload_sending: eligible plain-text final만 취소
+       └─ gateway/lifecycle cleanup: bounded marker 정리
 ```
 
 `openclaw plugins build`가 다음 manifest metadata를 생성한다.
@@ -193,7 +202,8 @@ runtime registration과 manifest 소유권이 다르면 플러그인은 로드�
 
 ## 7. 현재 route 해석
 
-도구 factory가 받은 `OpenClawPluginToolContext.deliveryContext`만 신뢰한다.
+도구 factory가 받은 `OpenClawPluginToolContext.deliveryContext`만 신뢰한다. 여기서 “현재 route”는
+도구를 호출한 바로 그 Slack 채널 또는 DM과, 호출이 시작된 thread를 뜻한다.
 
 ```text
 channel  = deliveryContext.channel  // 반드시 "slack"
@@ -343,6 +353,18 @@ raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성�
      media나 `audioAsVoice: true`는 계속 fail-open한다.
    - marker는 TTL/용량 pruning, Gateway stop, plugin runtime reset/delete/reload cleanup에서 제거한다.
 
+두 계층의 증거 범위는 source delivery mode에 따라 다르다.
+
+| source delivery mode | ordinary model final 경로 | 검증 가능한 것 |
+|---|---|---|
+| `message_tool_only` | ordinary final은 외부 source로 자동 전달되지 않음 | live smoke로 실제 Block Kit 전송, route/thread 상속, 렌더링, 정상 run 종료를 검증. 중복 가시 메시지가 없다는 사실만으로 hook 취소를 증명하지는 않음 |
+| automatic delivery + exact run metadata | final이 `reply_payload_sending`을 거쳐 adapter로 향함 | 의도적 plain final을 만들어 live hook E2E 검증 가능 |
+| run/channel metadata 누락 또는 충돌 | hook이 안전하게 fail-open | `NO_REPLY` 모델 계약에 의존하며, 진단·복구 final은 숨기지 않음 |
+
+`pnpm verify:completion`은 첫 번째 live smoke와 별개로 production에서 관찰한 relay shape를 fresh
+process에 재구성한다. 실제 global hook runner와 outbound pipeline을 사용해 hook 호출 1회, 취소
+1회, Slack adapter 호출 0회를 단언하므로 safety hook 자체의 회귀 증거다.
+
 `api.runContext`는 run 종료 시 지워지고 outer final delivery hook보다 먼저 없어질 수 있으므로 이
 상관관계 저장소에 사용하지 않는다. 이 hook은 exact run metadata가 있는 live dispatcher의
 마지막 안전망일 뿐이다. durable route/follow-up처럼 run metadata가 없는 경로는 도구 결과의
@@ -395,7 +417,9 @@ native durable queue는 platform send 전후의 crash와 unknown-send 복구를 
 ```text
 openclaw-slack-block-kit/
 ├── docs/
-│   └── ARCHITECTURE.md       # 규범적 설계
+│   ├── ARCHITECTURE.md       # 규범적 설계
+├── scripts/
+│   └── verify-completion-pipeline.mjs # fresh-process completion probe
 ├── src/
 │   ├── index.ts              # defineToolPlugin entry
 │   ├── tool.ts               # current-route durable tool
@@ -467,7 +491,9 @@ metadata/`contracts.tools` 일치를 검사해야 한다.
    수행한다. 이 경로는 tool outbound와 Slack rendering만 검증하며 final suppression은 검증하지
    않는다. 현재 agent-command delivery가 `replyPayloadSendingHook` metadata를 넘기지 않기 때문이다.
 6. 모든 offline/fresh-process 검증과 독립 리뷰가 끝난 뒤 production Gateway를 한 번만 재시작하고
-   최종 source-delivery gate를 수행한다.
+   source delivery mode를 먼저 확인한 다음 그 모드에서 증명 가능한 live gate만 수행한다.
+   `message_tool_only`에서는 send/route/thread/rendering/run completion을 확인하고, automatic final
+   delivery와 exact run metadata가 모두 있을 때만 duplicate-final hook의 live E2E를 주장한다.
 
 `plugins.entries.slack-block-kit.enabled` 변경은 config hot reload 로그를 남기지만 이미 import된 ESM
 plugin module을 새 코드로 교체하지 않는다. 따라서 off/on toggle을 코드 reload 증거로 간주하지
@@ -481,7 +507,7 @@ plugin module을 새 코드로 교체하지 않는다. 따라서 off/on toggle�
 4. 현재 thread 안에서 thread 보존 확인
 5. 두 메시지 batch 순서 확인
 6. 잘못된 block으로 Slack API 오류 정규화 확인
-7. 직접 전송 뒤 중복 plain final reply가 없는지 확인
+7. 직접 전송 뒤 중복 plain final reply가 없는지 확인하고, source delivery mode를 함께 기록
 8. 자동 전달 run이 `incomplete_turn / abandoned` 없이 끝나고 fallback 오류 메시지가 없는지 확인
 
 정확한 `NO_REPLY`로 visible final이 0개가 된 성공 run에서는 OpenClaw 진단 로그에
@@ -530,9 +556,11 @@ run이 정상 완료되었다면 이는 예상 가능한 진단이며 smoke 실�
 
 채택. 공통 표현이 가능하면 core `presentation`을 사용한다.
 
-### ADR-002: explicit tool, no global hook
+### ADR-002: explicit tool, narrowly scoped final-delivery safety hook
 
-채택. 모든 최종 응답을 가로채지 않고 필요할 때만 optional tool을 호출한다.
+채택. 모든 최종 응답을 변환하지 않고 필요할 때만 optional tool을 호출한다. global
+`reply_payload_sending` hook은 complete Slack-only exact-run의 plain-text duplicate final만 좁게
+취소하고, metadata 충돌·진단·rich payload는 fail-open한다.
 
 ### ADR-003: current-route only
 
