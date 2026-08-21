@@ -321,16 +321,23 @@ raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성�
      `slack_blocks_send`일 때만 suppression eligible이다.
    - 다른 도구, 검증 전용, 실패·부분 성공 호출을 하나라도 관찰하면 해당 run은 TTL 동안
      sticky하게 ineligible이며, 나중의 성공한 Slack 호출이 다시 활성화하지 못한다.
+   - 한 실제 호출을 harness와 native relay가 서로 다른 정규화 이름으로 중복 관찰할 수 있으므로
+     exact `toolCallId`를 idempotency key로 합친다. 같은 call id에서는 확인된 complete send가
+     우선하지만, 서로 다른 call id의 실패·다른 도구는 계속 sticky하게 무효화한다.
+   - call id가 없으면 안전하게 중복 판별할 수 없으므로 기존 sticky fail-open을 유지한다.
+   - event/context의 call id가 충돌하면 unkeyed ineligible 관찰로 처리해 fail-open한다.
    - event와 context가 함께 제공한 `runId`가 다르거나 exact `runId`가 없으면 기록하지 않는다.
-   - plugin-owned `Map`은 5분 TTL과 최대 1,024개 제한을 두며 session key로 대체 상관관계하지
-     않는다.
-   - 같은 exact `runId`의 `reply_payload_sending(kind=final)` 중 비어 있지 않은 plain text만
-     낮은 우선순위에서 취소한다.
+   - plugin-owned `Map`은 5분 TTL, 최대 1,024개 run, run당 최대 256개 exact call id 제한을 두며
+     session key로 대체 상관관계하지 않는다. call id 상한을 넘으면 해당 run은 fail-open한다.
+   - 같은 exact `runId`의 Slack `reply_payload_sending(kind=final)` 중 비어 있지 않은 plain
+     text만 낮은 우선순위에서 취소한다. event/context channel이 충돌하거나 Slack이 아니면
+     항상 통과한다.
    - final이 여러 payload로 분할될 수 있으므로 첫 취소 뒤 marker를 소비하지 않는다.
    - error, fallback/compaction/status, reasoning/commentary, media/presentation/interactive,
      channel-specific, 빈 text, 알 수 없는 미래 payload는 모두 fail-open한다.
-   - live dispatcher가 text-only final에 정규화해 붙이는 `mediaUrl: null`은 빈 envelope slot으로
-     간주하며 실제 media payload로 보지 않는다.
+   - host가 text-only final에 정규화해 붙이는 `mediaUrl: null`, undefined media/reply slot,
+     빈 `mediaUrls`, `audioAsVoice: false`는 빈/default envelope metadata로 간주한다. non-empty
+     media나 `audioAsVoice: true`는 계속 fail-open한다.
    - marker는 TTL/용량 pruning, Gateway stop, plugin runtime reset/delete/reload cleanup에서 제거한다.
 
 `api.runContext`는 run 종료 시 지워지고 outer final delivery hook보다 먼저 없어질 수 있으므로 이
@@ -419,8 +426,10 @@ openclaw-slack-block-kit/
 - 모든 tool result가 `terminate: false`
 - 완전 성공한 Slack-only run에만 `NO_REPLY` next action과 exact-run completion eligibility 생성
 - 같은 run의 다른/실패/검증 tool completion은 sticky하게 suppression 무효화
-- missing/mismatched run, session 충돌, host notice, rich/unknown/error final은 fail-open
-- 여러 final chunk 억제, marker TTL·최대 개수, lifecycle cleanup
+- 동일 `toolCallId`의 harness/native relay 중복 관찰은 idempotent하게 병합하고 distinct id는 분리
+- missing/mismatched run·tool call, session/channel 충돌, non-Slack, host notice,
+  rich/unknown/error final은 fail-open
+- 여러 final chunk 억제, marker TTL·run/call-id 최대 개수, lifecycle cleanup
 - 빈 `payloadOutcomes`의 legacy flat-results fallback과 incomplete-send 무음 금지
 - URL-bearing field의 비문자·빈 값·non-HTTPS 거부
 
@@ -430,12 +439,36 @@ openclaw-slack-block-kit/
 pnpm build
 pnpm typecheck
 pnpm test
+pnpm verify:completion
 pnpm plugin:metadata-check
 pnpm plugin:validate
 ```
 
 metadata check와 validate는 generated manifest drift 및 `defineToolPlugin`
 metadata/`contracts.tools` 일치를 검사해야 한다.
+
+### 재시작 없는 개발 검증
+
+변경 반복 중에는 production Gateway를 재시작하지 않는다.
+
+1. production live 로그에서 확인한 event/context field shape를 synthetic fixture로 재구성한다.
+2. `pnpm verify:completion`의 fresh process에서 `after_tool_call` 등록 handler로 completion store를
+   채운 뒤, normalized plain-text final은 실제 OpenClaw global hook runner와 outbound delivery
+   pipeline을 거쳐 platform adapter 전에 취소되는지 확인한다. bootstrap은 빈 payload로 send loop가
+   0회다. 본 검증은 public `deps.slack` test double을 tripwire로 두고 hook 호출·취소 각 1회와 adapter
+   호출 0회를 단언하며, `skipQueue`로 durable queue write도 생략한다.
+3. `openclaw plugins inspect slack-block-kit --runtime`의 fresh process에서 현재 `dist/` 등록을 확인한다.
+4. 고유 session key의 `openclaw agent --local` + `validateOnly` turn으로 실제 embedded harness,
+   native relay, tool loop와 정상 stop을 확인한다. `--deliver`는 사용하지 않는다.
+5. complete-send 검증이 필요할 때만 명시적인 Slack test channel을 대상으로 local delivery smoke를
+   수행한다. 이 경로는 tool outbound와 Slack rendering만 검증하며 final suppression은 검증하지
+   않는다. 현재 agent-command delivery가 `replyPayloadSendingHook` metadata를 넘기지 않기 때문이다.
+6. 모든 offline/fresh-process 검증과 독립 리뷰가 끝난 뒤 production Gateway를 한 번만 재시작하고
+   최종 source-delivery gate를 수행한다.
+
+`plugins.entries.slack-block-kit.enabled` 변경은 config hot reload 로그를 남기지만 이미 import된 ESM
+plugin module을 새 코드로 교체하지 않는다. 따라서 off/on toggle을 코드 reload 증거로 간주하지
+않는다.
 
 ### 실제 Slack smoke test
 

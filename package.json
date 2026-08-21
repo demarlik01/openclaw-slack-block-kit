@@ -20,7 +20,9 @@
     "preplugin:metadata-check": "pnpm build",
     "plugin:metadata-check": "openclaw plugins build --check --root . --entry ./dist/index.js",
     "preplugin:validate": "pnpm build",
-    "plugin:validate": "openclaw plugins validate --root . --entry ./dist/index.js"
+    "plugin:validate": "openclaw plugins validate --root . --entry ./dist/index.js",
+    "preverify:completion": "pnpm build",
+    "verify:completion": "node ./scripts/verify-completion-pipeline.mjs"
   },
   "dependencies": {
     "typebox": "^1.3.3"

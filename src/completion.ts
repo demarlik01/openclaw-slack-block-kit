@@ -2,6 +2,7 @@ import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
 export const COMPLETED_RUN_TTL_MS = 5 * 60_000;
 export const MAX_COMPLETED_RUNS = 1_024;
+export const MAX_TOOL_CALLS_PER_RUN = 256;
 
 const TOOL_NAME = "slack_blocks_send";
 
@@ -12,9 +13,12 @@ type RunRef = {
 
 type CompletedRun = {
   eligible: boolean;
+  correlationEligible: boolean;
+  unkeyedEligible: boolean;
+  capacityEligible: boolean;
   expiresAt: number;
   sessionKey?: string;
-  toolCallId?: string;
+  toolCalls: Map<string, boolean>;
 };
 
 type CompletionStoreOptions = {
@@ -62,8 +66,16 @@ function isPlainTextEnvelopeEntry(key: string, value: unknown) {
   }
 
   // OpenClaw normalizes text-only finals to `{ text, mediaUrl: null }` on the
-  // live dispatcher path. Null is an empty envelope slot, not rich content.
-  return key === "mediaUrl" && value === null;
+  // CLI projection path, and to `{ text, replyToTag: false,
+  // audioAsVoice: false }` before durable delivery. These empty/default slots
+  // are transport metadata, not rich content.
+  if (key === "mediaUrl") {
+    return value === null || value === undefined;
+  }
+  if (key === "mediaUrls") {
+    return value === undefined || (Array.isArray(value) && value.length === 0);
+  }
+  return key === "audioAsVoice" && (value === false || value === undefined);
 }
 
 /**
@@ -125,16 +137,48 @@ export class CompletedRunStore {
     const sessionConflict = Boolean(
       existing?.sessionKey && sessionKey && existing.sessionKey !== sessionKey,
     );
+    const toolCallId = normalizedId(params.toolCallId);
+    const toolCalls = existing?.toolCalls ?? new Map<string, boolean>();
+    let correlationEligible =
+      existing?.correlationEligible !== false && !sessionConflict;
+    let unkeyedEligible = existing?.unkeyedEligible ?? true;
+    let capacityEligible = existing?.capacityEligible ?? true;
+
+    if (toolCallId) {
+      const prior = toolCalls.get(toolCallId);
+      if (prior !== undefined) {
+        // One host tool invocation can be relayed through multiple harness
+        // observers under different normalized names. Exact toolCallId is the
+        // idempotency key; a confirmed complete send wins for that one call.
+        toolCalls.set(toolCallId, prior || params.completedSlackSend);
+      } else if (toolCalls.size >= MAX_TOOL_CALLS_PER_RUN) {
+        capacityEligible = false;
+      } else {
+        toolCalls.set(toolCallId, params.completedSlackSend);
+      }
+    } else {
+      // Without an exact call id, observations cannot be deduplicated safely.
+      // Keep the conservative sticky fail-open behavior.
+      unkeyedEligible = unkeyedEligible && params.completedSlackSend;
+    }
+
+    const eligible =
+      correlationEligible &&
+      unkeyedEligible &&
+      capacityEligible &&
+      [...toolCalls.values()].every(Boolean);
 
     this.runs.delete(runId);
     this.runs.set(runId, {
-      // Ineligibility is sticky for the run. A later successful Slack send must
-      // not hide the final answer after any other/failed tool completion.
-      eligible:
-        params.completedSlackSend && existing?.eligible !== false && !sessionConflict,
+      // Distinct tool calls remain sticky: every exact call id must resolve to
+      // a completed Slack send before a final can be suppressed.
+      eligible,
+      correlationEligible,
+      unkeyedEligible,
+      capacityEligible,
       expiresAt: this.now() + this.ttlMs,
       sessionKey: existing?.sessionKey ?? sessionKey,
-      toolCallId: normalizedId(params.toolCallId),
+      toolCalls,
     });
 
     while (this.runs.size > this.maxEntries) {
@@ -206,11 +250,15 @@ export function registerCompletionHooks(
       return;
     }
 
+    const toolCallId = resolveExactId(event.toolCallId, context.toolCallId);
+    const toolCallIdConflict = idsConflict(event.toolCallId, context.toolCallId);
+
     store.observe({
       runId,
       sessionKey: context.sessionKey,
-      toolCallId: event.toolCallId ?? context.toolCallId,
+      toolCallId,
       completedSlackSend:
+        !toolCallIdConflict &&
         event.toolName === TOOL_NAME &&
         context.toolName === TOOL_NAME &&
         event.error === undefined &&
@@ -229,9 +277,10 @@ export function registerCompletionHooks(
         return;
       }
 
+      const channelId = resolveExactId(event.channel, context.channelId);
       const runId = resolveExactId(event.runId, context.runId);
       const sessionKey = resolveExactId(event.sessionKey, context.sessionKey);
-      if (!runId || !store.matches({ runId, sessionKey })) {
+      if (channelId !== "slack" || !runId || !store.matches({ runId, sessionKey })) {
         return;
       }
 
