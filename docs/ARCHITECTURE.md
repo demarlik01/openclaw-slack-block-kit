@@ -1,349 +1,472 @@
-# openclaw-slack-block-kit 아키텍처
+# OpenClaw Slack Block Kit 아키텍처
 
-> OpenClaw 에이전트가 필요할 때 Slack Block Kit 메시지를 안전하게 전송하도록 하는 네이티브 플러그인.
+> 상태: v1 구현 기준 문서
+> 기준 런타임: OpenClaw `2026.7.1-2`
+> 범위: 현재 Slack 대화에 보내는 message-surface raw Block Kit
 
-## 1. 목적
+이 문서는 프로젝트의 유일한 규범적 아키텍처 문서다.
 
-OpenClaw의 공통 `presentation` 계약은 텍스트, 컨텍스트, 구분선, 버튼, 선택 메뉴를 Slack Block Kit으로 렌더링한다. 하지만 Slack 고유의 `fields`, `accessory`, `image`, `rich_text`, `overflow`, `datepicker` 같은 전체 Block Kit 표현력은 노출하지 않는다.
+## 1. 결론
 
-이 프로젝트는 기존 공통 계약을 대체하지 않는다. 공통 계약으로 표현할 수 없는 Slack 전용 UI가 필요할 때만 사용하는 선택형 도구를 추가한다.
+OpenClaw의 공통 `presentation`을 기본 경로로 사용한다. 이 플러그인은 `presentation`으로
+표현할 수 없는 Slack 전용 메시지 UI가 실제로 필요할 때만 쓰는 escape hatch다.
+
+```text
+공통 카드로 표현 가능
+  → core message + presentation
+
+Slack message-surface 전용 표현 필요
+  → slack_blocks_send + raw channelData.slack.blocks
+
+modal / App Home / external select / file·video workflow 필요
+  → 이 플러그인의 범위 밖, 별도 Slack application surface
+```
+
+플러그인이 해결하는 문제는 “Slack API를 새로 구현하는 것”이 아니다. OpenClaw이 이미 제공하는
+현재 채널·계정·스레드 문맥과 durable outbound 경로를 재사용하면서, raw Block Kit payload를
+안전하고 예측 가능한 도구 계약으로 노출하는 것이 목적이다.
+
+## 2. 목표와 비목표
 
 ### 목표
 
-- 에이전트 도구 `slack_block_send` 제공
-- Slack의 원시 `blocks` 배열 지원
-- 기존 OpenClaw Slack 계정, 토큰, 대상 해석 및 전송 경로 재사용
-- 전송 전에 구조와 Slack 제한 검증
-- 채널, DM, 스레드 전송 지원
-- 실패 시 에이전트가 수정 가능한 구조화 오류 반환
+- 선택형 에이전트 도구 `slack_blocks_send` 제공
+- 현재 실행 중인 Slack 대화와 스레드를 자동 상속
+- 여러 메시지를 순서대로 한 번에 전송
+- 각 메시지에 필수 fallback `text`와 raw `blocks` 전달
+- OpenClaw의 기존 Slack 인증, 대상 해석, hook, queue, receipt, unknown-send 복구 재사용
+- 전송 전 최소 구조·자원·보안 검증
+- sent, suppressed, partial failure, failed 결과를 구분해 반환
+- 성공한 직접 전송 뒤 중복 일반 답변을 줄이기 위한 `terminate: true` 사용
 
 ### 비목표
 
-- 모든 OpenClaw 최종 응답을 자동으로 Block Kit으로 변환
-- 기존 Slack 채널 플러그인 대체 또는 포크
-- 별도 Slack 토큰 저장
-- Block Kit 시각 편집기 제공
-- 파일 업로드와 Block Kit을 한 요청으로 결합
-- MVP에서 버튼 클릭 콜백이나 모달 처리
+- 모든 OpenClaw 응답을 자동으로 Block Kit으로 변환
+- 공통 `presentation` 대체
+- 별도 Slack 토큰, Socket Mode 연결, HTTP ingress 보유
+- 임의 채널·계정·스레드로 보내는 범용 Slack 클라이언트
+- Slack Block Kit 전체 JSON Schema를 프로젝트 안에 복제
+- v1에서 button/select action 처리
+- modal, App Home, Options Load, workflow step, 파일 등록·공유, video unfurl 지원
+- 배치 전체의 원자적 전송 보장
 
-## 2. 핵심 결정
+## 3. 지원 범위
 
-### ADR-001: 자동 변환 훅 대신 명시적 도구
+| 기능 | v1 | 비고 |
+|---|---:|---|
+| 현재 Slack 채널/DM | 지원 | `deliveryContext.to` 사용 |
+| 현재 Slack 스레드 | 지원 | `deliveryContext.threadId` 상속 |
+| 여러 메시지 순차 전송 | 지원 | payload 순서 보존 |
+| section, fields, image, accessory | 지원 | Slack message surface 규격에 따름 |
+| rich_text, table, data_visualization 등 | passthrough | 워크스페이스·Slack API 지원 여부가 최종 판단 |
+| 알 수 없는 신규 message block | passthrough | 버전 drift를 막기 위해 allowlist로 차단하지 않음 |
+| button/static select interaction | 거부 | v2에서 namespaced handler로 추가 |
+| actions/input block | 거부 | interaction 또는 view 전용 |
+| file/video/call block | 거부 | 별도 권한·등록·unfurl lifecycle 필요 |
+| modal / App Home | 미지원 | `views.*` 기반 별도 surface |
+| external select | 미지원 | 별도 Options Load endpoint 필요 |
+| 파일·비디오 workflow | 미지원 | 별도 권한과 API lifecycle 필요 |
 
-플러그인은 `message_sending` 훅으로 모든 Slack 응답을 가로채지 않고, 에이전트가 필요할 때 `slack_block_send`를 명시적으로 호출하게 한다.
+“passthrough 지원”은 Slack이 실제로 수락한다고 보장한다는 뜻이 아니다. 플러그인은 payload를
+변형하지 않고 전달하며, Slack API가 최종 스키마 validator 역할을 한다.
 
-이유:
+## 4. 핵심 구성요소와 책임
 
-- 일반 텍스트 응답의 스트리밍을 유지한다.
-- 파일, 스레드, 자동 답장과의 충돌을 피한다.
-- 카드가 필요한 응답과 그렇지 않은 응답을 에이전트가 구분할 수 있다.
-- 원시 Block Kit은 Slack 전용이므로 이식 가능한 기본 응답 경로에 섞지 않는다.
+| 구성요소 | 책임 | 하지 않는 일 |
+|---|---|---|
+| Producer | 데이터 조회, 정렬, 페이지 분할, fallback text와 완성된 blocks 생성 | 채널·계정·스레드 추측, Slack API 호출 |
+| `slack_blocks_send` | 현재 route 확인, 최소 검증, durable 전송, 결과 정규화 | blocks 재작성, 업무 정책 판정 |
+| OpenClaw outbound runtime | 인증, hook, queue, Slack adapter 호출, receipt, 복구 | Slack 전용 UI 설계 |
+| Slack API | 최신 Block Kit 스키마와 워크스페이스 권한 최종 검증 | producer 버그 자동 수정 |
 
-### ADR-002: OpenClaw Slack 런타임 재사용
+Producer가 만든 blocks는 플러그인이 임의로 정렬하거나 잘라내지 않는다. 제한을 넘거나 위험한
+payload는 명시적으로 거부한다.
 
-외부 플러그인에 공개된 `api.runtime.channel.outbound.loadAdapter("slack")`로 Slack outbound adapter를 얻고 `sendPayload(...)`를 호출한다. 검증된 블록은 OpenClaw이 호환성 목적으로 보존하는 `payload.channelData.slack.blocks`에 담는다.
+## 5. 공개 도구 계약
 
-이 경로를 사용하면 다음을 그대로 재사용한다.
-
-- `channels.slack` 및 `channels.slack.accounts.*` 계정 설정
-- SecretRef를 포함한 기존 인증 해석
-- `channel:`, `user:` 및 Slack ID 대상 해석
-- DM 채널 열기
-- Slack Web API 클라이언트와 재시도 동작
-- 공통 outbound delivery 결과와 `messageId`, `channelId`
-
-플러그인은 Slack 토큰을 입력으로 받거나 자체 설정 파일에 저장하지 않는다.
-
-### ADR-003: 공통 presentation 우선, raw blocks는 escape hatch
-
-도구 설명은 다음 선택 기준을 모델에 명시한다.
-
-1. `text`, `context`, `divider`, `buttons`, `select`만 필요하면 코어 `message` 도구의 `presentation`을 사용한다.
-2. Slack 고유 블록 또는 요소가 필요할 때만 `slack_block_send`를 사용한다.
-
-중복 기능처럼 보이더라도 원시 Block Kit 전송을 별도 도구로 분리하면 공통 메시지 스키마를 오염시키지 않고 기능의 위험 범위를 Slack으로 제한할 수 있다.
-
-### ADR-004: 도구는 optional로 등록
-
-`slack_block_send`는 외부 메시지를 전송하는 부수효과 도구이므로 `api.registerTool(..., { optional: true })`로 등록한다. 사용하려는 에이전트의 도구 allowlist에 다음 중 하나를 명시해야 한다.
-
-- `slack_block_send`
-- `slack-block-kit`
-- `group:plugins`
-
-## 3. 데이터 흐름
-
-```text
-Agent
-  │
-  │ slack_block_send({ target, text, blocks, ... })
-  ▼
-Tool input schema
-  │  필수 필드와 기본 타입 검증
-  ▼
-Block Kit validator
-  │  허용 블록/요소, 개수, 텍스트 길이, action_id 중복 검증
-  ▼
-OpenClaw public outbound runtime
-  │  계정/SecretRef/대상/DM/스레드 처리
-  ▼
-loadAdapter("slack").sendPayload({ payload.channelData.slack.blocks, ... })
-  │
-  ▼
-Slack chat.postMessage
-  │
-  ▼
-{ ok, messageId, channelId, warnings? }
-```
-
-## 4. 공개 도구 계약
-
-### `slack_block_send`
+### `slack_blocks_send`
 
 ```typescript
-type SlackBlockSendInput = {
-  target: string;
-  text: string;
-  blocks: SlackBlock[];
-  accountId?: string;
-  threadTs?: string;
+type SlackBlocksSendInput = {
+  messages: Array<{
+    text: string;
+    blocks: Array<Record<string, unknown>>;
+  }>;
   validateOnly?: boolean;
 };
 ```
 
-| 필드 | 필수 | 설명 |
-|---|---:|---|
-| `target` | 예 | `channel:C123`, `user:U123`, 또는 OpenClaw이 허용하는 Slack 대상 |
-| `text` | 예 | 알림, 접근성, 검색 결과에 쓰이는 fallback 텍스트 |
-| `blocks` | 예 | Slack Block Kit 블록 배열 |
-| `accountId` | 아니오 | 다중 Slack 계정 선택. 없으면 현재 에이전트 계정 또는 기본 계정 |
-| `threadTs` | 아니오 | Slack 스레드 timestamp |
-| `validateOnly` | 아니오 | 실제 전송 없이 검증 결과만 반환 |
+라우팅 필드는 입력에 넣지 않는다.
 
-`text`는 blocks에서 자동 생성하지 않고 항상 요구한다. Slack 알림과 접근성에서 최상위 `text`가 중요하고, 모델이 메시지 의도를 가장 정확하게 요약할 수 있기 때문이다.
+- `target` 없음
+- `accountId` 없음
+- `threadTs` 없음
+- Slack token 없음
+
+도구 입력을 통해 목적지를 바꿀 수 없게 해야 모델의 채널 ID 추측과 오발송 위험이 줄어든다.
+다른 목적지로 명시적으로 보내야 한다면 core `message` 도구를 사용한다.
+
+### 입력 제한
+
+- 호출당 메시지 1~10개
+- 메시지당 fallback `text` 1~4,000자
+- 메시지당 block 1~50개
+- 메시지당 직렬화된 blocks 최대 200 KiB
+- 전체 호출의 직렬화된 blocks 최대 1 MiB
+- 최대 중첩 깊이 20
+
+200 KiB와 1 MiB는 Slack의 공식 상한을 재현한 값이 아니라, 모델 생성 payload로부터 런타임을
+보호하기 위한 이 플러그인의 방어 한도다.
 
 ### 성공 결과
 
 ```json
 {
   "ok": true,
-  "messageId": "1755771000.123456",
-  "channelId": "C12345678",
-  "blockCount": 4,
+  "status": "sent",
+  "complete": true,
+  "sent": [
+    {
+      "index": 0,
+      "messageId": "1755771000.123456",
+      "channelId": "C12345678"
+    }
+  ],
   "warnings": []
 }
 ```
 
-### 검증 실패 결과
+### 부분 실패 결과
 
 ```json
 {
   "ok": false,
-  "error": {
-    "code": "INVALID_BLOCK_KIT",
-    "message": "Block Kit validation failed",
-    "issues": [
-      {
-        "path": "blocks[2].elements[0].action_id",
-        "message": "action_id must be unique within a message"
+  "status": "partial_failed",
+  "sent": [
+    {
+      "index": 0,
+      "messageId": "1755771000.123456",
+      "channelId": "C12345678"
+    }
+  ],
+  "failed": [
+    {
+      "index": 1,
+      "stage": "platform_send",
+      "error": {
+        "code": "SLACK_API_ERROR",
+        "message": "invalid_blocks"
       }
-    ]
-  }
+    }
+  ]
 }
 ```
 
-## 5. 검증 설계
+배치는 원자적이지 않다. `partial_failed`를 받은 호출자가 전체 배치를 그대로 재시도하면 이미
+전송된 메시지가 중복될 수 있으므로 실패한 index만 재구성해야 한다.
 
-검증은 두 단계로 나눈다.
+## 6. 플러그인 등록
 
-### 5.1 도구 입력 스키마
-
-TypeBox 스키마가 최상위 계약을 검증한다.
-
-- 빈 `target`과 `text` 거부
-- `blocks`는 비어 있지 않은 배열
-- `accountId`, `threadTs`는 선택 문자열
-- `validateOnly`는 선택 boolean
-
-### 5.2 Block Kit 의미 검증
-
-MVP는 Slack SDK 타입만 신뢰하지 않고 런타임 검증을 수행한다.
-
-- Slack이 허용하는 블록 type인지 확인
-- 메시지당 block 개수 제한 확인
-- 각 text 객체의 type과 길이 확인
-- elements/fields 개수 제한 확인
-- 버튼, select 등 action 요소의 `action_id` 존재 및 중복 확인
-- URL 형식 확인
-- 알려지지 않은 필드는 경고 또는 오류로 처리
-
-정확한 수치 제한은 구현 시 사용하는 Slack Block Kit 공식 규격 버전에 맞춰 상수와 테스트로 고정한다. SDK 타입과 Slack 서버 검증이 달라질 수 있으므로 서버 오류도 별도 코드로 정규화한다.
-
-### 검증 모드
-
-- `strict` 기본값: 알려지지 않은 블록/요소/필드를 거부
-- `passthrough` 향후 옵션: 새 Slack 기능을 즉시 써야 할 때 알 수 없는 필드를 보존
-
-MVP는 안전한 `strict`만 구현한다.
-
-## 6. 계정과 대상 해석
-
-계정 우선순위:
+이 프로젝트는 tool-only plugin이므로 `defineToolPlugin`을 사용한다.
 
 ```text
-input.accountId
-  → tool context의 agentAccountId
-  → OpenClaw 기본 Slack account
+defineToolPlugin
+  └─ static tool: slack_blocks_send (optional)
+       └─ factory(toolContext)
+            ├─ Slack surface가 아니면 null
+            └─ Slack이면 현재 deliveryContext를 캡처한 tool 반환
 ```
 
-대상은 OpenClaw Slack 런타임에 그대로 전달한다. 플러그인이 채널 이름을 임의로 ID로 변환하지 않는다. 안정적인 운영을 위해 문서와 도구 설명에서는 `channel:C...`와 `user:U...` 형식을 권장한다.
+`openclaw plugins build`가 다음 manifest metadata를 생성한다.
 
-현재 세션에서 Slack target과 thread timestamp를 완전히 신뢰할 수 있는 형태로 도구 컨텍스트가 제공하지 않으므로 MVP에서는 `target`을 필수로 둔다. 향후 OpenClaw 공개 컨텍스트가 확장되면 동일 채널 기본값을 추가할 수 있다.
+- `activation`
+- `contracts.tools: ["slack_blocks_send"]`
+- `toolMetadata.slack_blocks_send.optional: true`
+- `configSchema`
 
-## 7. 상호작용 범위
+tool 이름이나 schema가 바뀌면 generator와 `openclaw plugins validate`를 반드시 다시 실행한다.
+runtime registration과 manifest 소유권이 다르면 플러그인은 로드되지 않아야 한다.
 
-MVP는 Block Kit을 **표시하고 전송하는 것**까지만 담당한다.
+## 7. 현재 route 해석
 
-- URL 버튼: 동작
-- Slack 클라이언트 내부 선택/입력 UI: 렌더링 가능
-- `action_id` 기반 클릭 이벤트 처리: 아직 하지 않음
-- 모달 열기, `views.open`: 아직 하지 않음
-
-클릭 이벤트까지 처리하려면 Slack 채널 플러그인의 interactivity ingress와 안전하게 결합해야 한다. 이는 Phase 2에서 별도 공개 콜백 등록 API 존재 여부를 확인한 뒤 설계한다. 임의 HTTP 엔드포인트나 별도 Slack 앱을 추가하지 않는다.
-
-## 8. 프로젝트 구조
+도구 factory가 받은 `OpenClawPluginToolContext.deliveryContext`만 신뢰한다.
 
 ```text
-openclaw-slack-block-kit/
-├── docs/
-│   └── ARCHITECTURE.md
-├── src/
-│   ├── index.ts              # 플러그인 등록
-│   ├── tool.ts               # slack_block_send 도구
-│   ├── schema.ts             # TypeBox 입력 스키마
-│   ├── validator.ts          # Block Kit 의미 검증
-│   ├── errors.ts             # 오류 정규화
-│   └── types.ts              # 내부 타입
-├── test/
-│   ├── validator.test.ts
-│   └── tool.test.ts
-├── openclaw.plugin.json      # 플러그인 발견/설정 스키마
-├── package.json
-├── tsconfig.json
-└── README.md
+channel  = deliveryContext.channel  // 반드시 "slack"
+to       = deliveryContext.to       // 필수
+account  = deliveryContext.accountId ?? agentAccountId
+thread   = deliveryContext.threadId
 ```
 
-## 9. 플러그인 매니페스트와 설정
+다음 경우 도구를 노출하지 않거나 구조화 오류를 반환한다.
 
-예상 매니페스트:
+- 현재 surface가 Slack이 아님
+- `deliveryContext.to`가 없음
+- 현재 runtime config를 얻을 수 없음
 
-```json
+입력 인자가 ambient route를 덮어쓰는 경로는 v1에 만들지 않는다.
+
+## 8. 전송 경로
+
+직접 `loadAdapter("slack").sendPayload(...)`를 호출하지 않고 공개 durable helper인
+`sendDurableMessageBatch(...)`를 사용한다.
+
+```mermaid
+sequenceDiagram
+    participant A as Agent
+    participant T as slack_blocks_send
+    participant D as OpenClaw durable outbound
+    participant S as Slack adapter
+    participant API as Slack API
+
+    A->>T: { messages }
+    T->>T: route + envelope + guard validation
+    T->>D: channel=slack, current route, payloads
+    D->>D: queue intent + hooks + render plan
+    D->>S: ReplyPayload[]
+    S->>API: chat.postMessage(text, blocks, thread_ts)
+    API-->>D: channel + ts
+    D-->>T: sent/suppressed/partial_failed/failed
+    T-->>A: normalized receipt
+```
+
+각 payload는 다음 형태다.
+
+```typescript
 {
-  "id": "slack-block-kit",
-  "name": "Slack Block Kit",
-  "description": "Send validated Slack Block Kit messages through OpenClaw",
-  "configSchema": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-      "validationMode": {
-        "type": "string",
-        "enum": ["strict"],
-        "default": "strict"
-      }
+  text: message.text,
+  channelData: {
+    slack: {
+      blocks: message.blocks
     }
   }
 }
 ```
 
-토큰이나 Slack 앱 설정은 이 플러그인의 config에 두지 않는다. 기존 `channels.slack` 설정이 유일한 인증 원천이다.
+이 경로를 통해 다음을 재사용한다.
 
-## 10. 오류 모델
+- 기존 `channels.slack` 인증과 SecretRef
+- account 및 DM/channel target 처리
+- `message_sending` 계열 hook
+- write-ahead delivery queue
+- platform receipt
+- ambiguous/unknown send 복구
+- per-payload outcome과 partial failure
 
-| 코드 | 의미 | 재시도 |
+## 9. 검증 철학
+
+### 검증하는 것
+
+1. TypeBox envelope
+   - `messages`, `text`, `blocks`, `validateOnly`의 기본 타입과 개수
+2. 런타임 자원 guard
+   - block 수, 직렬화 크기, 중첩 깊이
+3. 공통 식별자 guard
+   - `block_id`와 `action_id`의 타입·길이·메시지 내 중복
+4. v1 범위 guard
+   - `input` block 거부
+   - `actions`, `file`, `video`, `call` block 거부
+   - `action_id`가 있는 interactive element 거부
+5. JSON 안전성
+   - 순환 참조나 직렬화 불가능 값 거부
+6. URL guard
+   - `url`, `image_url`, `thumb_url`은 유효한 `https:` URL만 허용
+
+### 검증하지 않는 것
+
+- Slack의 모든 block/element type allowlist 복제
+- 각 block별 모든 text 길이와 field 조합 재현
+- 새 Slack type을 “모른다”는 이유만으로 거부
+- 잘못된 payload 자동 수정
+
+Slack Block Kit은 계속 확장된다. 프로젝트가 자체 strict schema를 유지하면 새 type을 사용할 수
+없고, Slack의 실제 validator와 불일치하는 이중 진실이 생긴다. 따라서 local validator는 안전과
+명확한 v1 범위만 보장하고, 최신 의미 검증은 Slack API에 맡긴다.
+
+## 10. 상호작용 정책
+
+v1은 display-only다. `action_id`가 있는 element는 거부한다.
+
+이 제한은 렌더링 능력 때문이 아니라, 사용자가 눌렀는데 아무 일도 일어나지 않는 dead UI를
+방지하기 위한 제품 정책이다. 버튼과 select가 필요하고 공통 `presentation`으로 충분하면 core
+경로를 사용한다.
+
+v2에서 raw interaction을 추가할 때는 다음 조건을 모두 만족해야 한다.
+
+- `action_id` namespace 강제, 예: `sbk:<handler>:<action>`
+- OpenClaw `registerInteractiveHandler` 사용
+- Slack의 짧은 ACK deadline 안에서 먼저 응답
+- 중복 delivery와 재시도에 대한 업무 멱등성
+- 권한·사용자·현재 message 검증
+- message update와 ephemeral error 정책
+- static select부터 시작하고 external select는 별도 범위로 유지
+
+## 11. 중복 최종응답 억제
+
+raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성공한 실제 전송 결과는
+`terminate: true`를 반환해 모델이 같은 내용을 일반 텍스트로 다시 보내는 것을 줄인다.
+
+주의할 점:
+
+- `terminate`는 런타임 hint이며 별도 `NO_REPLY` 문자열 규약에 의존하지 않는다.
+- 한 모델 turn에서 여러 도구가 함께 실행되면 모든 최종 tool result가 terminate를 설정해야 조기
+  종료된다.
+- 검증 전용, suppressed, partial failure, failed 결과는 terminate하지 않는다. 모델이 사용자에게
+  설명하거나 복구할 기회를 남긴다.
+
+## 12. 오류와 내구성 모델
+
+도구는 다음 상태를 구분한다.
+
+| 상태 | 의미 | terminate |
 |---|---|---:|
-| `INVALID_INPUT` | 최상위 입력 계약 위반 | 수정 후 |
-| `INVALID_BLOCK_KIT` | 블록 의미/제한 위반 | 수정 후 |
-| `SLACK_NOT_CONFIGURED` | 선택 계정의 Slack 인증 없음 | 설정 후 |
-| `TARGET_NOT_FOUND` | 대상 해석 또는 접근 실패 | 대상 수정 후 |
-| `SLACK_RATE_LIMITED` | Slack API rate limit | `retryAfter` 이후 |
-| `SLACK_API_ERROR` | 기타 Slack API 오류 | 오류별 판단 |
-| `UNSUPPORTED_OPTION` | 현재 런타임이 요청 옵션을 지원하지 않음 | 옵션 제거 |
+| `validated` | 검증만 완료, 외부 전송 없음 | false |
+| `sent` | 모든 payload의 플랫폼 receipt 확인 (`complete: true`) | true |
+| `partial_suppressed` | 일부 payload는 전송되고 일부는 hook/정책으로 억제 | false |
+| `incomplete_sent` | top-level send는 성공했지만 모든 payload의 완료를 증명하지 못함 | false |
+| `suppressed` | hook/정책에 의해 의도적으로 미전송 | false |
+| `partial_failed` | 일부 전송 후 후속 payload 실패 | false |
+| `failed` | 플랫폼 receipt 없이 실패 | false |
 
-오류 문자열에 토큰, SecretRef 값, 전체 설정 객체를 포함하지 않는다.
+Slack rate limit이면 `retryAfter`를 보존한다. Slack API 오류 문자열은 구조화하되 token, 전체
+payload, 내부 stack은 model-facing 결과에 포함하지 않는다.
 
-## 11. 보안 원칙
+native durable queue는 platform send 전후의 crash와 unknown-send 복구를 다룬다. 하지만 같은
+업무 요청이 새로운 tool call로 반복되는 것까지 의미론적으로 dedupe하지는 않는다. 영속
+`requestId` 기반 업무 멱등성은 실제 producer 요구가 생길 때 별도 저장소와 함께 설계한다.
 
-- 도구 입력으로 Slack 토큰을 받지 않는다.
-- 로그와 도구 결과에 인증정보를 출력하지 않는다.
-- 부수효과 도구이므로 optional 등록한다.
-- OpenClaw의 기존 도구 allowlist와 Slack 채널 권한을 우회하지 않는다.
-- `target`과 `accountId`를 명시적으로 기록하되 메시지 본문 전체 로깅은 기본 비활성화한다.
-- 검증 실패 payload는 크기를 제한해 컨텍스트 폭주를 막는다.
+## 13. 보안
 
-## 12. 테스트 전략
+- 별도 Slack token을 입력·설정·로그로 받지 않는다.
+- 현재 `deliveryContext` 밖으로 라우팅하지 않는다.
+- fallback `text`는 접근성과 알림을 위해 항상 필수다.
+- raw blocks와 Slack 오류 전체를 로그에 남기지 않는다.
+- validation issue는 최대 50개까지만 반환한다.
+- tool은 optional로 등록하고 명시적으로 allowlist된 에이전트에서만 사용한다.
+- 플러그인은 URL-bearing field에 `https:`를 강제한다. 허용 도메인과 이미지 출처 정책은
+  producer가 책임지며, 민감한 서명 URL을 tool result에 재출력하지 않는다.
+
+## 14. 프로젝트 구조
+
+```text
+openclaw-slack-block-kit/
+├── docs/
+│   └── ARCHITECTURE.md       # 규범적 설계
+├── src/
+│   ├── index.ts              # defineToolPlugin entry
+│   ├── tool.ts               # current-route durable tool
+│   ├── schema.ts             # TypeBox envelope
+│   ├── validator.ts          # 최소 guard validation
+│   ├── errors.ts             # 안전한 오류 정규화
+│   └── types.ts              # 내부 결과 타입
+├── test/
+│   ├── metadata.test.ts      # plugin metadata/manifest 계약
+│   ├── tool.test.ts          # route, durable outcome, terminate
+│   └── validator.test.ts     # resource/scope guard
+├── openclaw.plugin.json
+├── package.json
+└── README.md
+```
+
+## 15. 테스트와 승인 기준
 
 ### 단위 테스트
 
-- 지원 블록별 정상 payload
-- 중첩 요소와 길이/개수 제한
-- 중복 `action_id`
-- 잘못된 URL과 text 객체
-- 오류 경로가 정확한 배열 인덱스를 가리키는지 확인
-- Secret이 오류에 포함되지 않는지 확인
+- 현재 Slack `deliveryContext`의 to/account/thread 상속
+- non-Slack 및 missing-route 거부
+- messages 순서와 raw blocks 불변 전달
+- `validateOnly`에서 외부 호출 없음
+- unknown block passthrough
+- 50개 초과, 크기, 깊이, duplicate id 거부
+- v1 interactive와 input block 거부
+- sent/suppressed/partial_failed/failed 결과 매핑
+- 성공 시에만 terminate
 
-### 도구 테스트
+### 정적·런타임 검증
 
-- Slack outbound adapter `sendPayload` mock 호출 인자 확인
-- accountId 우선순위
-- target/threadTs 전달
-- `validateOnly`에서 전송하지 않음
-- Slack 오류 코드 정규화
+```bash
+pnpm build
+pnpm typecheck
+pnpm test
+pnpm plugin:metadata-check
+pnpm plugin:validate
+```
 
-### 통합 테스트
+metadata check와 validate는 generated manifest drift 및 `defineToolPlugin`
+metadata/`contracts.tools` 일치를 검사해야 한다.
 
-- OpenClaw가 플러그인 매니페스트와 엔트리포인트 발견
-- optional tool allowlist 적용
-- 테스트 Slack 채널에 section/image/actions 조합 전송
-- 스레드 전송 및 반환 message ID 확인
+### 실제 Slack smoke test
 
-## 13. 구현 단계
+1. 현재 채널에 section + fields 전송
+2. image accessory 전송
+3. rich_text 또는 최신 passthrough block 전송
+4. 현재 thread 안에서 thread 보존 확인
+5. 두 메시지 batch 순서 확인
+6. 잘못된 block으로 Slack API 오류 정규화 확인
+7. 직접 전송 뒤 중복 plain final reply가 없는지 확인
 
-### Phase 1 — 전송 MVP
+실제 계정이 없는 CI에서는 adapter 경계까지 검증하고, live smoke는 release checklist로 유지한다.
 
-1. 플러그인/TypeScript 스캐폴드
-2. `slack_block_send` optional 도구 등록
-3. section, divider, context, image, actions 중심 검증
-4. OpenClaw Slack 런타임을 통한 전송
-5. 단위 테스트와 로컬 플러그인 설치 문서
+## 16. 단계별 계획
 
-### Phase 2 — Block Kit 전체 범위와 상호작용
+### v1 — raw message escape hatch
 
-1. 지원 block/element 확대
-2. 버튼/선택 이벤트 수신 경로 조사 및 콜백 API 설계
-3. 모달 지원 여부 결정
-4. Slack Block Kit Builder payload 호환 테스트
+- `defineToolPlugin`과 generated manifest
+- optional `slack_blocks_send`
+- current-route only
+- messages batch
+- minimal guard validator
+- `sendDurableMessageBatch`
+- structured partial outcome
+- success-only terminate
 
-### Phase 3 — 편의 기능
+### v1.1 — producer 연동
 
-1. 재사용 가능한 템플릿
-2. 안전한 텍스트→Block Kit 변환 helper
-3. 기존 메시지 update 지원
-4. Block Kit payload lint CLI
+- producer가 완성한 `{ text, blocks }[]`를 그대로 전달
+- 큰 JSON을 LLM이 재작성하지 않도록 typed result 또는 artifact reference 가능성 검토
+- 실제 반복 사용에서 필요한 size limit 조정
 
-## 14. MVP 완료 기준
+### v2 — 제한된 interaction
 
-- OpenClaw에서 플러그인이 오류 없이 발견되고 활성화된다.
-- allowlist에 넣은 에이전트에서만 `slack_block_send`가 보인다.
-- 별도 토큰 설정 없이 기존 Slack 계정으로 전송한다.
-- section, fields, image, actions가 포함된 메시지를 실제 Slack에 게시한다.
-- 잘못된 payload는 Slack API 호출 전에 거부한다.
-- 채널과 스레드 전송 결과로 `messageId`, `channelId`를 반환한다.
-- 테스트, 설치법, 최소 사용 예제가 문서화된다.
+- namespaced button/static select
+- ACK, authorization, idempotency, message update
+- interaction별 테스트 fixture
 
-## 15. 구현 전 확인 항목
+### 별도 프로젝트 후보
 
-- 설치된 OpenClaw `2026.7.1-2`의 plugin SDK export에서 Slack runtime 타입을 외부 플러그인이 안정적으로 import할 수 있는지 확인
-- `replyBroadcast`는 현재 공개 outbound adapter 계약에 직접 노출되지 않으므로 MVP 범위에서 제외
-- Slack SDK의 Block/element 런타임 스키마 제공 여부 확인; 없으면 자체 validator 범위를 확정
-- 외부 플러그인 패키지에서 `@slack/web-api` 타입을 직접 dependency로 둘지 peer/dev dependency로 둘지 결정
+- modal / App Home
+- external select Options Load
+- 파일 등록·공유
+- video/unfurl
+
+이 기능들은 sender plugin의 자연스러운 확장이 아니라 Slack application adapter에 가깝다.
+
+## 17. ADR 요약
+
+### ADR-001: presentation-first
+
+채택. 공통 표현이 가능하면 core `presentation`을 사용한다.
+
+### ADR-002: explicit tool, no global hook
+
+채택. 모든 최종 응답을 가로채지 않고 필요할 때만 optional tool을 호출한다.
+
+### ADR-003: current-route only
+
+채택. `deliveryContext`를 사용하고 target override를 받지 않는다.
+
+### ADR-004: durable outbound helper
+
+채택. 직접 adapter 호출 대신 `sendDurableMessageBatch`를 사용한다.
+
+### ADR-005: minimal validation
+
+채택. 안전 guard만 로컬에서 검사하고 Slack을 최신 의미 validator로 사용한다.
+
+### ADR-006: display-only v1
+
+채택. interaction은 handler·ACK·멱등성 설계가 끝난 v2로 분리한다.
+
+### ADR-007: non-atomic batch
+
+채택. 부분 성공을 명시하고 성공 index/receipt를 반환한다.
