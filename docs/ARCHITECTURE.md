@@ -329,6 +329,8 @@ raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성�
    - final이 여러 payload로 분할될 수 있으므로 첫 취소 뒤 marker를 소비하지 않는다.
    - error, fallback/compaction/status, reasoning/commentary, media/presentation/interactive,
      channel-specific, 빈 text, 알 수 없는 미래 payload는 모두 fail-open한다.
+   - live dispatcher가 text-only final에 정규화해 붙이는 `mediaUrl: null`은 빈 envelope slot으로
+     간주하며 실제 media payload로 보지 않는다.
    - marker는 TTL/용량 pruning, Gateway stop, plugin runtime reset/delete/reload cleanup에서 제거한다.
 
 `api.runContext`는 run 종료 시 지워지고 outer final delivery hook보다 먼저 없어질 수 있으므로 이

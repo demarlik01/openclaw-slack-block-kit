@@ -56,6 +56,16 @@ const PLAIN_TEXT_PAYLOAD_KEYS = new Set([
   "replyToCurrent",
 ]);
 
+function isPlainTextEnvelopeEntry(key: string, value: unknown) {
+  if (PLAIN_TEXT_PAYLOAD_KEYS.has(key)) {
+    return true;
+  }
+
+  // OpenClaw normalizes text-only finals to `{ text, mediaUrl: null }` on the
+  // live dispatcher path. Null is an empty envelope slot, not rich content.
+  return key === "mediaUrl" && value === null;
+}
+
 /**
  * The hook is deliberately narrower than ReplyPayload. Unknown, rich, notice,
  * reasoning, and operator-owned payloads fail open so the plugin cannot hide
@@ -66,7 +76,9 @@ export function isSuppressiblePlainTextFinal(payload: unknown): boolean {
     return false;
   }
 
-  return Object.keys(payload).every((key) => PLAIN_TEXT_PAYLOAD_KEYS.has(key));
+  return Object.entries(payload).every(([key, value]) =>
+    isPlainTextEnvelopeEntry(key, value),
+  );
 }
 
 export function isCompletedSlackBlocksSendResult(result: unknown): boolean {

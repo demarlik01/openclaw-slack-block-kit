@@ -409,6 +409,9 @@ describe("isSuppressiblePlainTextFinal", () => {
   it("only accepts non-empty plain text with safe reply metadata", () => {
     expect(isSuppressiblePlainTextFinal({ text: "duplicate" })).toBe(true);
     expect(
+      isSuppressiblePlainTextFinal({ text: "normalized duplicate", mediaUrl: null }),
+    ).toBe(true);
+    expect(
       isSuppressiblePlainTextFinal({
         text: "duplicate",
         replyToId: "123",
@@ -417,5 +420,11 @@ describe("isSuppressiblePlainTextFinal", () => {
       }),
     ).toBe(true);
     expect(isSuppressiblePlainTextFinal({ text: "", channelData: {} })).toBe(false);
+    expect(
+      isSuppressiblePlainTextFinal({
+        text: "real media",
+        mediaUrl: "https://example.com/image.png",
+      }),
+    ).toBe(false);
   });
 });
