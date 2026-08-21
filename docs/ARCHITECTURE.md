@@ -41,7 +41,7 @@ OpenClaw의 공통 `presentation` 계약은 텍스트, 컨텍스트, 구분선, 
 
 ### ADR-002: OpenClaw Slack 런타임 재사용
 
-전송은 `api.runtime.channel.slack.sendMessageSlack(target, text, options)`를 사용한다. `options.blocks`에 검증된 Block Kit 배열을 전달한다.
+외부 플러그인에 공개된 `api.runtime.channel.outbound.loadAdapter("slack")`로 Slack outbound adapter를 얻고 `sendPayload(...)`를 호출한다. 검증된 블록은 OpenClaw이 호환성 목적으로 보존하는 `payload.channelData.slack.blocks`에 담는다.
 
 이 경로를 사용하면 다음을 그대로 재사용한다.
 
@@ -50,7 +50,7 @@ OpenClaw의 공통 `presentation` 계약은 텍스트, 컨텍스트, 구분선, 
 - `channel:`, `user:` 및 Slack ID 대상 해석
 - DM 채널 열기
 - Slack Web API 클라이언트와 재시도 동작
-- `messageId`, `channelId` 결과 형식
+- 공통 outbound delivery 결과와 `messageId`, `channelId`
 
 플러그인은 Slack 토큰을 입력으로 받거나 자체 설정 파일에 저장하지 않는다.
 
@@ -84,10 +84,10 @@ Tool input schema
 Block Kit validator
   │  허용 블록/요소, 개수, 텍스트 길이, action_id 중복 검증
   ▼
-OpenClaw Slack runtime
+OpenClaw public outbound runtime
   │  계정/SecretRef/대상/DM/스레드 처리
   ▼
-sendMessageSlack(target, fallbackText, { accountId, threadTs, blocks })
+loadAdapter("slack").sendPayload({ payload.channelData.slack.blocks, ... })
   │
   ▼
 Slack chat.postMessage
@@ -296,7 +296,7 @@ openclaw-slack-block-kit/
 
 ### 도구 테스트
 
-- `sendMessageSlack` mock 호출 인자 확인
+- Slack outbound adapter `sendPayload` mock 호출 인자 확인
 - accountId 우선순위
 - target/threadTs 전달
 - `validateOnly`에서 전송하지 않음
@@ -346,7 +346,6 @@ openclaw-slack-block-kit/
 ## 15. 구현 전 확인 항목
 
 - 설치된 OpenClaw `2026.7.1-2`의 plugin SDK export에서 Slack runtime 타입을 외부 플러그인이 안정적으로 import할 수 있는지 확인
-- `replyBroadcast`가 `sendMessageSlack` 공개 옵션에 포함되는지 확인하고, 없으면 MVP에서 제외
+- `replyBroadcast`를 공개 outbound adapter 계약으로 전달할 수 있는지 확인하고, 없으면 MVP에서 제외
 - Slack SDK의 Block/element 런타임 스키마 제공 여부 확인; 없으면 자체 validator 범위를 확정
 - 외부 플러그인 패키지에서 `@slack/web-api` 타입을 직접 dependency로 둘지 peer/dev dependency로 둘지 결정
-

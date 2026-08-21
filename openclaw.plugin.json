@@ -1,0 +1,17 @@
+{
+  "id": "slack-block-kit",
+  "name": "Slack Block Kit",
+  "description": "Send validated Slack Block Kit messages through OpenClaw",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "validationMode": {
+        "type": "string",
+        "enum": ["strict"],
+        "default": "strict"
+      }
+    }
+  }
+}
