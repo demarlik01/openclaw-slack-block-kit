@@ -1,6 +1,11 @@
 import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
 import { registerCompletionHooks } from "./completion.js";
 import { SlackSendBlocksSchema } from "./schema.js";
+import {
+  SLACK_SEND_BLOCKS_DESCRIPTION,
+  SLACK_SEND_BLOCKS_LABEL,
+  SLACK_SEND_BLOCKS_NAME,
+} from "./tool-copy.js";
 import { createSlackSendBlocksTool } from "./tool.js";
 
 const plugin = defineToolPlugin({
@@ -9,10 +14,9 @@ const plugin = defineToolPlugin({
   description: "Send current-route Slack message-surface Block Kit through OpenClaw",
   tools: (tool) => [
     tool({
-      name: "slack_send_blocks",
-      label: "Send Slack Block Kit",
-      description:
-        'Send one or more display-only raw Slack Block Kit messages to the current Slack conversation and thread. Arguments must use {"messages":[{"text":"fallback","blocks":[...]}],"validateOnly":false}; never put text or blocks at the top level. Prefer the core message tool with presentation for portable text/context/divider/buttons/select cards. Use this optional tool only for Slack-only message layouts such as image accessories, precise fields, rich_text, table, or data_visualization. Call it as the final standalone tool. After a complete send, return exactly NO_REPLY with no other text because the visible response was already delivered.',
+      name: SLACK_SEND_BLOCKS_NAME,
+      label: SLACK_SEND_BLOCKS_LABEL,
+      description: SLACK_SEND_BLOCKS_DESCRIPTION,
       parameters: SlackSendBlocksSchema,
       optional: true,
       factory({ api, toolContext }) {

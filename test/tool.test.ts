@@ -3,6 +3,11 @@ import type {
   OpenClawPluginToolContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { describe, expect, it, vi } from "vitest";
+import {
+  SLACK_SEND_BLOCKS_DESCRIPTION,
+  SLACK_SEND_BLOCKS_LABEL,
+  SLACK_SEND_BLOCKS_NAME,
+} from "../src/tool-copy.js";
 import { createSlackSendBlocksTool } from "../src/tool.js";
 
 function createApi() {
@@ -49,10 +54,12 @@ const messages = [
 ];
 
 describe("slack_send_blocks", () => {
-  it("exposes the canonical public tool name", () => {
+  it("exposes the canonical model-facing metadata", () => {
     const tool = createSlackSendBlocksTool(createApi(), createContext(), vi.fn() as never);
 
-    expect(tool.name).toBe("slack_send_blocks");
+    expect(tool.name).toBe(SLACK_SEND_BLOCKS_NAME);
+    expect(tool.label).toBe(SLACK_SEND_BLOCKS_LABEL);
+    expect(tool.description).toBe(SLACK_SEND_BLOCKS_DESCRIPTION);
   });
 
   it.each([

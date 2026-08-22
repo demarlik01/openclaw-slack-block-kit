@@ -11,6 +11,11 @@ import {
 } from "openclaw/plugin-sdk/channel-outbound";
 import { normalizeSlackError } from "./errors.js";
 import { SlackSendBlocksSchema } from "./schema.js";
+import {
+  SLACK_SEND_BLOCKS_DESCRIPTION,
+  SLACK_SEND_BLOCKS_LABEL,
+  SLACK_SEND_BLOCKS_NAME,
+} from "./tool-copy.js";
 import type { SlackSendBlocksInput, ValidationIssue } from "./types.js";
 import { validateSlackMessages } from "./validator.js";
 
@@ -214,10 +219,9 @@ export function createSlackSendBlocksTool(
   sendBatch: DurableSender = sendDurableMessageBatch,
 ) {
   return {
-    name: "slack_send_blocks",
-    label: "Send Slack Block Kit",
-    description:
-      'Send display-only raw Slack Block Kit to the current Slack conversation. Use {"messages":[{"text":"fallback","blocks":[...]}],"validateOnly":false}; text and blocks are never top-level fields.',
+    name: SLACK_SEND_BLOCKS_NAME,
+    label: SLACK_SEND_BLOCKS_LABEL,
+    description: SLACK_SEND_BLOCKS_DESCRIPTION,
     parameters: SlackSendBlocksSchema,
     async execute(_id: string, rawInput: unknown, signal?: AbortSignal) {
       const parsedInput = parseToolInput(rawInput);

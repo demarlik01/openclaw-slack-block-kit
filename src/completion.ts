@@ -1,10 +1,12 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 
+import { SLACK_SEND_BLOCKS_NAME } from "./tool-copy.js";
+
 export const COMPLETED_RUN_TTL_MS = 5 * 60_000;
 export const MAX_COMPLETED_RUNS = 1_024;
 export const MAX_TOOL_CALLS_PER_RUN = 256;
 
-const TOOL_NAME = "slack_send_blocks";
+const TOOL_NAME = SLACK_SEND_BLOCKS_NAME;
 
 type RunRef = {
   runId?: string;
