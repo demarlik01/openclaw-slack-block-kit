@@ -35,7 +35,7 @@ current-channel, account, and thread context and durable outbound path.
 
 ### Goals
 
-- Provide the optional agent tool `slack_send_blocks`
+- Provide the Slack-only agent tool `slack_send_blocks`
 - Automatically inherit the currently executing Slack conversation and thread
 - Send multiple messages sequentially in one call
 - Pass mandatory fallback `text` and raw `blocks` for every message
@@ -181,14 +181,14 @@ failed indexes.
 
 ## 6. Plugin Registration
 
-This project exposes an optional tool as its primary surface and also registers narrowly scoped
-hooks that handle only completion after a successful direct send. It uses `defineToolPlugin` for
-the tool declaration and generated manifest metadata.
+This project exposes a default-visible Slack-only tool as its primary surface and also registers
+narrowly scoped hooks that handle only completion after a successful direct send. It uses
+`defineToolPlugin` for the tool declaration and generated manifest metadata.
 
 ```text
 plugin.register
   ├─ defineToolPlugin.register
-  │    └─ static tool: slack_send_blocks (optional)
+  │    └─ static tool: slack_send_blocks (default-visible)
   │         └─ factory(toolContext)
   │              ├─ returns null unless the surface is Slack
   │              └─ on Slack, returns a tool that captures the current deliveryContext
@@ -202,8 +202,16 @@ plugin.register
 
 - `activation`
 - `contracts.tools: ["slack_send_blocks"]`
-- `toolMetadata.slack_send_blocks.optional: true`
 - `configSchema`
+
+Permission-level `optional` metadata is intentionally omitted. Installing and enabling this
+single-purpose plugin is the normal opt-in, while the factory still returns `null` outside Slack
+turns. This affects plugin-level default exposure only: an effective global, agent, or provider
+`tools.profile`, an explicit allow or deny policy, and a sandbox tool policy still take precedence.
+Profiles other than `full` do not include third-party plugin tools by default, so users must add
+`slack_send_blocks` with `alsoAllow` (or to an existing `allow` array at that scope).
+Sandboxed agents need the same sandbox-layer grant because OpenClaw's default sandbox allowlist
+also excludes plugin tools when no explicit sandbox tool policy is configured.
 
 Whenever the tool name or schema changes, rerun both the generator and
 `openclaw plugins validate`. The plugin must not load when runtime registration and manifest
@@ -431,7 +439,10 @@ real producer requirement emerges.
 - Always require fallback `text` for accessibility and notifications.
 - Do not log complete raw blocks or complete Slack errors.
 - Return no more than 50 validation issues.
-- Register the tool as optional and use it only in explicitly allowlisted agents.
+- Create the tool only for Slack turns; effective global, agent, and provider tool profiles and
+  policies, plus sandbox tool policy, still take precedence over plugin-level default exposure.
+- Require a sandbox-layer grant for sandboxed agents; the default sandbox allowlist excludes plugin
+  tools even without an explicit sandbox tool policy.
 - For URL-bearing fields, the plugin verifies a non-empty string and enforces `https:`. The producer
   is responsible for allowed-domain and image-source policy, and sensitive signed URLs are not
   echoed back in the tool result.
@@ -474,6 +485,7 @@ openclaw-slack-block-kit/
 
 ### Unit Tests
 
+- Return `null` from the tool factory outside Slack and the canonical tool on Slack turns
 - Inherit to/account/thread from the current Slack `deliveryContext`
 - Reject non-Slack and missing-route contexts
 - Preserve message order and pass raw blocks unchanged
@@ -567,7 +579,7 @@ release-checklist item.
 ### v1 — raw message escape hatch
 
 - `defineToolPlugin` and generated manifest
-- Optional `slack_send_blocks`
+- Default-visible, Slack-factory-gated `slack_send_blocks`
 - Current-route only
 - Message batch
 - Minimal guard validator
@@ -606,7 +618,7 @@ representation.
 
 ### ADR-002: explicit tool, narrowly scoped final-delivery safety hook
 
-Accepted. Call the optional tool only when needed instead of transforming every final response. The
+Accepted. Call the explicit tool only when needed instead of transforming every final response. The
 global `reply_payload_sending` hook narrowly cancels only a complete Slack-only exact-run's
 plain-text duplicate final and fails open for metadata conflicts, diagnostics, and rich payloads.
 

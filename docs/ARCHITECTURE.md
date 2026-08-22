@@ -34,7 +34,7 @@ modal / App Home / external select / file·video workflow 필요
 
 ### 목표
 
-- 선택형 에이전트 도구 `slack_send_blocks` 제공
+- Slack 전용 에이전트 도구 `slack_send_blocks` 제공
 - 현재 실행 중인 Slack 대화와 스레드를 자동 상속
 - 여러 메시지를 순서대로 한 번에 전송
 - 각 메시지에 필수 fallback `text`와 raw `blocks` 전달
@@ -177,14 +177,14 @@ type SlackSendBlocksInput = {
 
 ## 6. 플러그인 등록
 
-이 프로젝트는 optional tool을 주 surface로 제공하고, 성공한 직접 전송의 completion만 다루는
-좁은 범위의 hooks를 함께 등록한다. 도구 선언과 generated manifest metadata에는
+이 프로젝트는 기본 노출되는 Slack 전용 tool을 주 surface로 제공하고, 성공한 직접 전송의
+completion만 다루는 좁은 범위의 hooks를 함께 등록한다. 도구 선언과 generated manifest metadata에는
 `defineToolPlugin`을 사용한다.
 
 ```text
 plugin.register
   ├─ defineToolPlugin.register
-  │    └─ static tool: slack_send_blocks (optional)
+  │    └─ static tool: slack_send_blocks (기본 노출)
   │         └─ factory(toolContext)
   │              ├─ Slack surface가 아니면 null
   │              └─ Slack이면 현재 deliveryContext를 캡처한 tool 반환
@@ -198,8 +198,16 @@ plugin.register
 
 - `activation`
 - `contracts.tools: ["slack_send_blocks"]`
-- `toolMetadata.slack_send_blocks.optional: true`
 - `configSchema`
+
+권한 수준의 `optional` metadata는 의도적으로 넣지 않는다. 이 단일 목적 플러그인을 설치하고
+활성화하는 것 자체를 일반적인 opt-in으로 보며, factory는 Slack turn이 아니면 계속 `null`을
+반환한다. 이는 플러그인 수준의 기본 노출만 정하는 결정이다. 전역·agent·provider의 유효한
+`tools.profile`, 명시적인 allow/deny 정책, sandbox tool policy가 계속 우선한다. `full` 외의
+profile에는 제3자 플러그인 도구가 기본으로 포함되지 않으므로 해당 scope의 `alsoAllow`
+(또는 기존 `allow` 배열)에 `slack_send_blocks`를 추가해야 한다.
+sandbox를 사용하는 agent는 sandbox 수준에서도 같은 허용이 필요하다. 명시적인
+sandbox tool policy가 없어도 OpenClaw의 기본 sandbox allowlist가 플러그인 도구를 제외한다.
 
 tool 이름이나 schema가 바뀌면 generator와 `openclaw plugins validate`를 반드시 다시 실행한다.
 runtime registration과 manifest 소유권이 다르면 플러그인은 로드되지 않아야 한다.
@@ -411,7 +419,10 @@ native durable queue는 platform send 전후의 crash와 unknown-send 복구를 
 - fallback `text`는 접근성과 알림을 위해 항상 필수다.
 - raw blocks와 Slack 오류 전체를 로그에 남기지 않는다.
 - validation issue는 최대 50개까지만 반환한다.
-- tool은 optional로 등록하고 명시적으로 allowlist된 에이전트에서만 사용한다.
+- tool은 Slack turn에서만 생성하며, 전역·agent·provider의 유효한 tool profile과 policy,
+  sandbox tool policy가 플러그인 수준의 기본 노출보다 우선한다.
+- sandbox를 사용하는 agent에는 sandbox 수준의 허용을 요구한다. 명시적인 정책이
+  없어도 기본 sandbox allowlist는 플러그인 도구를 제외한다.
 - 플러그인은 URL-bearing field가 있을 때 비어 있지 않은 문자열인지 확인하고 `https:`를 강제한다. 허용
   도메인과 이미지 출처 정책은 producer가 책임지며, 민감한 서명 URL을 tool result에 재출력하지
   않는다.
@@ -454,6 +465,7 @@ openclaw-slack-block-kit/
 
 ### 단위 테스트
 
+- Slack 외부에서 tool factory는 `null`, Slack turn에서는 canonical tool 반환
 - 현재 Slack `deliveryContext`의 to/account/thread 상속
 - non-Slack 및 missing-route 거부
 - messages 순서와 raw blocks 불변 전달
@@ -533,7 +545,7 @@ run이 정상 완료되었다면 이는 예상 가능한 진단이며 smoke 실�
 ### v1 — raw message escape hatch
 
 - `defineToolPlugin`과 generated manifest
-- optional `slack_send_blocks`
+- 기본 노출되며 Slack factory로 제한되는 `slack_send_blocks`
 - current-route only
 - messages batch
 - minimal guard validator
@@ -570,7 +582,7 @@ run이 정상 완료되었다면 이는 예상 가능한 진단이며 smoke 실�
 
 ### ADR-002: explicit tool, narrowly scoped final-delivery safety hook
 
-채택. 모든 최종 응답을 변환하지 않고 필요할 때만 optional tool을 호출한다. global
+채택. 모든 최종 응답을 변환하지 않고 필요할 때만 명시적 tool을 호출한다. global
 `reply_payload_sending` hook은 complete Slack-only exact-run의 plain-text duplicate final만 좁게
 취소하고, metadata 충돌·진단·rich payload는 fail-open한다.
 

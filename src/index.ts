@@ -18,7 +18,6 @@ const plugin = defineToolPlugin({
       label: SLACK_SEND_BLOCKS_LABEL,
       description: SLACK_SEND_BLOCKS_DESCRIPTION,
       parameters: SlackSendBlocksSchema,
-      optional: true,
       factory({ api, toolContext }) {
         const channel = toolContext.deliveryContext?.channel ?? toolContext.messageChannel;
         if (channel !== "slack") {

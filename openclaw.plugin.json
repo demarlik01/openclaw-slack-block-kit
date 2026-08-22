@@ -15,10 +15,5 @@
     "tools": [
       "slack_send_blocks"
     ]
-  },
-  "toolMetadata": {
-    "slack_send_blocks": {
-      "optional": true
-    }
   }
 }

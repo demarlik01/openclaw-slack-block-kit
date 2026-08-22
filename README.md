@@ -8,7 +8,7 @@ messages from an OpenClaw agent to the **current Slack channel, DM, or thread**.
 - Reuses the Slack connection already configured in OpenClaw.
 - Inherits the current conversation and thread automatically.
 - Never asks the model for a Slack token or channel ID.
-- Exposes one optional, Slack-only tool: `slack_send_blocks`.
+- Exposes one Slack-only tool: `slack_send_blocks`.
 
 ## Before / After
 
@@ -51,26 +51,38 @@ ClawHub is the primary discovery and install path for this plugin.
 openclaw plugins install npm:openclaw-slack-block-kit
 ```
 
-### Allow the optional tool
+### Tool visibility and policy
 
-Add only `slack_send_blocks` to the agent that should use it:
+Installing and enabling this single-purpose plugin is the opt-in; its tool is created
+only for Slack turns. No separate `openclaw.json` edit beyond installation is needed
+when `plugins.allow` is unset or includes `slack-block-kit`, the effective tool profile
+is unset or `full`, no restrictive allow or deny policy applies, and the agent is
+either not sandboxed or its sandbox tool policy already grants `slack_send_blocks`.
+
+New local OpenClaw setups commonly use `tools.profile: "coding"`, which excludes
+third-party plugin tools. With `coding`, `messaging`, or `minimal`, merge this into the
+affected global or agent `tools` scope:
 
 ```json5
 {
-  agents: {
-    list: [
-      {
-        id: "my-agent",
-        tools: { alsoAllow: ["slack_send_blocks"] },
-      },
-    ],
+  tools: {
+    alsoAllow: ["slack_send_blocks"],
   },
 }
 ```
 
-If that scope already has `tools.allow`, add `slack_send_blocks` to the existing
-`allow` array instead; `allow` and `alsoAllow` cannot be used together in the same
-scope. Allowing the single tool is safer than allowing every plugin tool.
+If that same scope already has `tools.allow`, add `slack_send_blocks` to its existing
+`allow` array instead; OpenClaw rejects `allow` and `alsoAllow` together in one scope.
+An agent-level `tools.alsoAllow` replaces the global additive list, so if one is
+present, add `slack_send_blocks` to that agent's list too. If a provider- or
+model-specific policy is the filtering layer, grant the tool at the matching
+`tools.byProvider["<provider>"]` or `tools.byProvider["<provider>/<model>"]` scope (or
+the corresponding per-agent scope).
+
+A sandboxed agent always needs the same grant in `tools.sandbox.tools.alsoAllow` (or
+its existing `allow` array), because OpenClaw's default sandbox allowlist excludes
+plugin tools even when no sandbox tool policy is configured. To opt a specific agent
+out, add `slack_send_blocks` to that agent's `tools.deny`.
 
 ### Verify
 
@@ -172,8 +184,14 @@ failed indexes; retrying the entire batch can duplicate messages that already su
 1. Start the request from Slack; the tool is hidden on other surfaces.
 2. Run `openclaw plugins inspect slack-block-kit --runtime --json`.
 3. If `plugins.allow` is configured, include `slack-block-kit`.
-4. Include `slack_send_blocks` in the agent's `tools.allow` or `tools.alsoAllow`.
-5. For sandboxed agents, allow the tool in the sandbox policy too.
+4. If `tools.profile` is `coding`, `messaging`, or `minimal`, or the agent uses a
+   restrictive `tools.allow`, grant `slack_send_blocks` with `tools.alsoAllow` (or add
+   it to the existing `allow` array at that scope).
+5. If the agent or matching `tools.byProvider` scope defines its own policy, grant the
+   tool there too; an agent-level `alsoAllow` replaces the global additive list.
+6. If the agent is sandboxed, grant `slack_send_blocks` in
+   `tools.sandbox.tools.alsoAllow` (or its existing `allow` array). This is required
+   even when no explicit sandbox tool policy is configured.
 
 ### `INVALID_BLOCK_KIT`
 
@@ -230,7 +248,7 @@ completion contracts.
 
 - Architecture: [English](docs/ARCHITECTURE.en.md) · [한국어](docs/ARCHITECTURE.md)
 - Slack: [Block Kit overview](https://docs.slack.dev/block-kit/) · [All blocks](https://docs.slack.dev/reference/block-kit/blocks/) · [Section and fields](https://docs.slack.dev/reference/block-kit/blocks/section-block/) · [Table](https://docs.slack.dev/reference/block-kit/blocks/table-block/) · [Block Kit Builder](https://app.slack.com/block-kit-builder)
-- OpenClaw: [Plugin installation](https://docs.openclaw.ai/cli/plugins) · [Building plugins](https://docs.openclaw.ai/plugins/building-plugins)
+- OpenClaw: [Plugin installation](https://docs.openclaw.ai/cli/plugins) · [Tool profiles and policies](https://docs.openclaw.ai/gateway/config-tools) · [Building plugins](https://docs.openclaw.ai/plugins/building-plugins)
 
 ## License
 

@@ -8,7 +8,7 @@ OpenClaw 에이전트가 표, 이미지 카드, 정밀한 필드 배치 같은 S
 - OpenClaw에 이미 설정된 Slack 연결을 재사용합니다.
 - 현재 대화와 스레드를 자동으로 상속합니다.
 - 모델에 Slack token이나 channel ID를 요구하지 않습니다.
-- `slack_send_blocks`라는 Slack 전용 optional tool 하나만 노출합니다.
+- `slack_send_blocks`라는 Slack 전용 도구 하나만 노출합니다.
 
 ## Before / After
 
@@ -51,26 +51,38 @@ ClawHub가 이 플러그인의 기본 검색·설치 경로입니다.
 openclaw plugins install npm:openclaw-slack-block-kit
 ```
 
-### optional tool 허용
+### 도구 노출과 정책
 
-이 도구를 사용할 에이전트에 `slack_send_blocks` 하나만 추가하세요.
+이 단일 목적 플러그인을 설치하고 활성화하는 것 자체가 opt-in이며, 도구는 Slack
+turn에서만 생성됩니다. `plugins.allow`가 없거나 `slack-block-kit`을 포함하고,
+적용되는 tool profile이 없거나 `full`이며, 제한적인 allow/deny 정책이 없고, agent가
+sandbox를 사용하지 않거나 sandbox tool policy가 이미 `slack_send_blocks`를 허용한다면
+설치 외에 `openclaw.json`을 따로 수정할 필요가 없습니다.
+
+새 로컬 OpenClaw 설정에는 제3자 플러그인 도구를 포함하지 않는
+`tools.profile: "coding"`이 자주 사용됩니다. `coding`, `messaging`, `minimal`을
+사용한다면 영향을 받는 전역 또는 agent `tools` scope에 다음을 병합하세요.
 
 ```json5
 {
-  agents: {
-    list: [
-      {
-        id: "my-agent",
-        tools: { alsoAllow: ["slack_send_blocks"] },
-      },
-    ],
+  tools: {
+    alsoAllow: ["slack_send_blocks"],
   },
 }
 ```
 
-같은 scope에 이미 `tools.allow`가 있다면 기존 `allow` 배열에 `slack_send_blocks`를
-추가하세요. 한 scope에서 `allow`와 `alsoAllow`를 함께 사용할 수 없습니다. 플러그인 도구
-전체보다 필요한 도구 하나만 허용하는 편이 안전합니다.
+같은 scope에 이미 `tools.allow`가 있다면 `alsoAllow`를 추가하지 말고 기존 `allow`
+배열에 `slack_send_blocks`를 추가하세요. OpenClaw는 한 scope의 `allow`와
+`alsoAllow`를 함께 허용하지 않습니다. agent 수준의 `tools.alsoAllow`는 전역 추가 목록을
+대체하므로 해당 agent에 이 설정이 있다면 그 목록에도 `slack_send_blocks`를
+추가하세요. provider 또는 model별 정책이 필터링한다면 일치하는
+`tools.byProvider["<provider>"]` 또는 `tools.byProvider["<provider>/<model>"]` scope(또는 해당
+agent scope)에서도 도구를 허용하세요.
+
+sandbox를 사용하는 agent는 `tools.sandbox.tools.alsoAllow`(또는 기존 `allow` 배열)에서도
+같은 도구를 반드시 허용해야 합니다. 명시적인 sandbox tool policy가 없어도 OpenClaw의
+기본 sandbox allowlist에는 플러그인 도구가 포함되지 않습니다. 특정 agent에서 숨기려면
+해당 agent의 `tools.deny`에 `slack_send_blocks`를 추가하세요.
 
 ### 확인
 
@@ -169,8 +181,14 @@ block 조합을 실제로 수락할지는 Slack API가 최종 판단합니다.
 1. Slack에서 요청을 시작하세요. 다른 surface에서는 도구가 숨겨집니다.
 2. `openclaw plugins inspect slack-block-kit --runtime --json`을 실행하세요.
 3. `plugins.allow`를 사용한다면 `slack-block-kit`을 포함하세요.
-4. 에이전트의 `tools.allow` 또는 `tools.alsoAllow`에 `slack_send_blocks`를 포함하세요.
-5. sandboxed agent라면 sandbox policy에도 이 도구를 허용하세요.
+4. `tools.profile`이 `coding`, `messaging`, `minimal`이거나 agent가 제한적인
+   `tools.allow`를 사용한다면 `tools.alsoAllow`로 `slack_send_blocks`를 허용하세요.
+   같은 scope에 이미 `allow`가 있다면 기존 배열에 추가하세요.
+5. agent 또는 일치하는 `tools.byProvider` scope가 자체 정책을 사용한다면 그곳에서도
+   도구를 허용하세요. agent 수준의 `alsoAllow`는 전역 추가 목록을 대체합니다.
+6. agent가 sandbox를 사용한다면 `tools.sandbox.tools.alsoAllow`(또는 기존 `allow`
+   배열)에서도 `slack_send_blocks`를 허용하세요. 명시적인 sandbox tool policy가
+   없어도 필요합니다.
 
 ### `INVALID_BLOCK_KIT`
 
@@ -226,7 +244,7 @@ validation, durability, error, fail-open completion 계약은 아키텍처 문�
 
 - 아키텍처: [한국어](docs/ARCHITECTURE.md) · [English](docs/ARCHITECTURE.en.md)
 - Slack: [Block Kit 개요](https://docs.slack.dev/block-kit/) · [전체 block](https://docs.slack.dev/reference/block-kit/blocks/) · [Section과 fields](https://docs.slack.dev/reference/block-kit/blocks/section-block/) · [Table](https://docs.slack.dev/reference/block-kit/blocks/table-block/) · [Block Kit Builder](https://app.slack.com/block-kit-builder)
-- OpenClaw: [플러그인 설치](https://docs.openclaw.ai/cli/plugins) · [플러그인 개발](https://docs.openclaw.ai/plugins/building-plugins)
+- OpenClaw: [플러그인 설치](https://docs.openclaw.ai/cli/plugins) · [Tool profile과 policy](https://docs.openclaw.ai/gateway/config-tools) · [플러그인 개발](https://docs.openclaw.ai/plugins/building-plugins)
 
 ## 라이선스
 
