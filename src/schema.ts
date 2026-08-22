@@ -16,7 +16,7 @@ const SlackMessageSchema = Type.Object(
   { additionalProperties: false },
 );
 
-export const SlackBlocksSendSchema = Type.Object(
+export const SlackSendBlocksSchema = Type.Object(
   {
     messages: Type.Array(SlackMessageSchema, {
       minItems: 1,

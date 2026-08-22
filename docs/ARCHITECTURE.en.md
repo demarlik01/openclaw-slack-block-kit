@@ -21,7 +21,7 @@ Expressible as a shared card
   → core message + presentation
 
 Requires a Slack message-surface-specific representation
-  → slack_blocks_send + raw channelData.slack.blocks
+  → slack_send_blocks + raw channelData.slack.blocks
 
 Requires a modal / App Home / external select / file or video workflow
   → out of scope for this plugin; use a separate Slack application surface
@@ -35,7 +35,7 @@ current-channel, account, and thread context and durable outbound path.
 
 ### Goals
 
-- Provide the optional agent tool `slack_blocks_send`
+- Provide the optional agent tool `slack_send_blocks`
 - Automatically inherit the currently executing Slack conversation and thread
 - Send multiple messages sequentially in one call
 - Pass mandatory fallback `text` and raw `blocks` for every message
@@ -83,7 +83,7 @@ payload without transforming it, and the Slack API acts as the final schema vali
 | Component | Responsibilities | Does not |
 |---|---|---|
 | Producer | Fetch data, sort, paginate, and create fallback text and complete blocks | Guess channel/account/thread or call the Slack API |
-| `slack_blocks_send` | Verify the current route, perform minimum validation, send through the durable outbound path, and normalize the result | Rewrite blocks or decide business policy |
+| `slack_send_blocks` | Verify the current route, perform minimum validation, send through the durable outbound path, and normalize the result | Rewrite blocks or decide business policy |
 | OpenClaw outbound runtime | Authentication, hooks, queue, Slack adapter invocation, receipts, and recovery | Design Slack-specific UI |
 | Slack API | Final validation against the latest Block Kit schema and workspace permissions | Automatically fix producer bugs |
 
@@ -92,10 +92,10 @@ rejects payloads that exceed limits or are unsafe.
 
 ## 5. Public Tool Contract
 
-### `slack_blocks_send`
+### `slack_send_blocks`
 
 ```typescript
-type SlackBlocksSendInput = {
+type SlackSendBlocksInput = {
   messages: Array<{
     text: string;
     blocks: Array<Record<string, unknown>>;
@@ -188,7 +188,7 @@ the tool declaration and generated manifest metadata.
 ```text
 plugin.register
   ├─ defineToolPlugin.register
-  │    └─ static tool: slack_blocks_send (optional)
+  │    └─ static tool: slack_send_blocks (optional)
   │         └─ factory(toolContext)
   │              ├─ returns null unless the surface is Slack
   │              └─ on Slack, returns a tool that captures the current deliveryContext
@@ -201,8 +201,8 @@ plugin.register
 `openclaw plugins build` generates the following manifest metadata.
 
 - `activation`
-- `contracts.tools: ["slack_blocks_send"]`
-- `toolMetadata.slack_blocks_send.optional: true`
+- `contracts.tools: ["slack_send_blocks"]`
+- `toolMetadata.slack_send_blocks.optional: true`
 - `configSchema`
 
 Whenever the tool name or schema changes, rerun both the generator and
@@ -238,7 +238,7 @@ Use the public durable helper `sendDurableMessageBatch(...)` instead of calling
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant T as slack_blocks_send
+    participant T as slack_send_blocks
     participant D as OpenClaw durable outbound
     participant S as Slack adapter
     participant API as Slack API
@@ -343,7 +343,7 @@ duplicate ordinary response through two layers.
 2. Delivery safety hook
    - `after_tool_call` observes every tool completion in the same run.
    - A run is eligible for suppression only when every observed call in that run is a
-     `slack_blocks_send` call with `ok: true`, `status: sent`, and `complete: true`.
+     `slack_send_blocks` call with `ok: true`, `status: sent`, and `complete: true`.
    - If any other tool, validation-only call, failed call, or partially successful call is observed,
      the run becomes sticky-ineligible for its TTL; a later successful Slack call cannot reactivate
      it.
@@ -560,7 +560,7 @@ release-checklist item.
 ### v1 — raw message escape hatch
 
 - `defineToolPlugin` and generated manifest
-- Optional `slack_blocks_send`
+- Optional `slack_send_blocks`
 - Current-route only
 - Message batch
 - Minimal guard validator

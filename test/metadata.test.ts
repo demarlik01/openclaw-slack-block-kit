@@ -10,10 +10,11 @@ describe("tool plugin metadata", () => {
     expect(metadata?.id).toBe("slack-block-kit");
     expect(metadata?.tools).toEqual([
       expect.objectContaining({
-        name: "slack_blocks_send",
+        name: "slack_send_blocks",
         optional: true,
       }),
     ]);
+    expect(metadata?.tools.map((tool) => tool.name)).not.toContain("slack_blocks_send");
     expect(plugin.register).toBeTypeOf("function");
   });
 });

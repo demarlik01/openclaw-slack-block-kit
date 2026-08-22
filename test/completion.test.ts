@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CompletedRunStore,
   MAX_TOOL_CALLS_PER_RUN,
-  isCompletedSlackBlocksSendResult,
+  isCompletedSlackSendBlocksResult,
   isSuppressiblePlainTextFinal,
   registerCompletionHooks,
 } from "../src/completion.js";
@@ -70,13 +70,13 @@ describe("Block Kit completion hooks", () => {
 
     fixture.handler("after_tool_call")(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         toolCallId: "call-1",
         result: sentToolResult,
       },
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         sessionKey: "session-1",
         toolCallId: "call-1",
@@ -118,12 +118,12 @@ describe("Block Kit completion hooks", () => {
 
     fixture.handler("after_tool_call")(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         result: sentToolResult,
       },
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         sessionKey: "shared-session",
       },
@@ -197,18 +197,49 @@ describe("Block Kit completion hooks", () => {
     ).toBeUndefined();
   });
 
+  it("does not accept the pre-release tool name as completion evidence", () => {
+    const fixture = createHookApi();
+    const store = registerCompletionHooks(fixture.api);
+
+    fixture.handler("after_tool_call")(
+      {
+        toolName: "slack_blocks_send",
+        runId: "run-legacy-name",
+        result: sentToolResult,
+      },
+      {
+        toolName: "slack_blocks_send",
+        runId: "run-legacy-name",
+        sessionKey: "session-1",
+      },
+    );
+
+    expect(store.matches({ runId: "run-legacy-name", sessionKey: "session-1" })).toBe(false);
+    expect(
+      fixture.handler("reply_payload_sending")(
+        {
+          kind: "final",
+          runId: "run-legacy-name",
+          sessionKey: "session-1",
+          payload: { text: "must remain visible" },
+        },
+        { channelId: "slack", runId: "run-legacy-name", sessionKey: "session-1" },
+      ),
+    ).toBeUndefined();
+  });
+
   it("never suppresses an error final after a completed send", () => {
     const fixture = createHookApi();
     registerCompletionHooks(fixture.api);
 
     fixture.handler("after_tool_call")(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         result: sentToolResult,
       },
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         sessionKey: "session-1",
       },
@@ -233,12 +264,12 @@ describe("Block Kit completion hooks", () => {
 
     fixture.handler("after_tool_call")(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         result: sentToolResult,
       },
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-1",
         sessionKey: "session-1",
       },
@@ -313,8 +344,8 @@ describe("Block Kit completion hooks", () => {
 
     // A later tool invalidates an otherwise eligible send.
     afterToolCall(
-      { toolName: "slack_blocks_send", runId: "run-after", result: sentToolResult },
-      { toolName: "slack_blocks_send", runId: "run-after" },
+      { toolName: "slack_send_blocks", runId: "run-after", result: sentToolResult },
+      { toolName: "slack_send_blocks", runId: "run-after" },
     );
     afterToolCall(
       { toolName: "other_tool", runId: "run-after", result: { ok: true } },
@@ -328,23 +359,23 @@ describe("Block Kit completion hooks", () => {
       { toolName: "other_tool", runId: "run-before" },
     );
     afterToolCall(
-      { toolName: "slack_blocks_send", runId: "run-before", result: sentToolResult },
-      { toolName: "slack_blocks_send", runId: "run-before" },
+      { toolName: "slack_send_blocks", runId: "run-before", result: sentToolResult },
+      { toolName: "slack_send_blocks", runId: "run-before" },
     );
     expect(finalFor("run-before")).toBeUndefined();
 
     // Failed/validate-only Slack calls also permanently invalidate the run.
     afterToolCall(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-failed",
         result: { details: { ok: true, status: "validated" } },
       },
-      { toolName: "slack_blocks_send", runId: "run-failed" },
+      { toolName: "slack_send_blocks", runId: "run-failed" },
     );
     afterToolCall(
-      { toolName: "slack_blocks_send", runId: "run-failed", result: sentToolResult },
-      { toolName: "slack_blocks_send", runId: "run-failed" },
+      { toolName: "slack_send_blocks", runId: "run-failed", result: sentToolResult },
+      { toolName: "slack_send_blocks", runId: "run-failed" },
     );
     expect(finalFor("run-failed")).toBeUndefined();
 
@@ -352,12 +383,12 @@ describe("Block Kit completion hooks", () => {
     for (let index = 0; index < 2; index += 1) {
       afterToolCall(
         {
-          toolName: "slack_blocks_send",
+          toolName: "slack_send_blocks",
           runId: "run-exclusive",
           toolCallId: `call-${index}`,
           result: sentToolResult,
         },
-        { toolName: "slack_blocks_send", runId: "run-exclusive" },
+        { toolName: "slack_send_blocks", runId: "run-exclusive" },
       );
     }
     expect(finalFor("run-exclusive")).toEqual(expect.objectContaining({ cancel: true }));
@@ -376,26 +407,26 @@ describe("Block Kit completion hooks", () => {
 
     afterToolCall(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-relayed",
         toolCallId: "call-1",
         result: sentToolResult,
       },
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-relayed",
         toolCallId: "call-1",
       },
     );
     afterToolCall(
       {
-        toolName: "openclawslack_blocks_send",
+        toolName: "openclawslack_send_blocks",
         runId: "run-relayed",
         toolCallId: "call-1",
         result: { content: [{ type: "text", text: "relayed" }] },
       },
       {
-        toolName: "openclawslack_blocks_send",
+        toolName: "openclawslack_send_blocks",
         runId: "run-relayed",
         toolCallId: "call-1",
       },
@@ -406,26 +437,26 @@ describe("Block Kit completion hooks", () => {
     // may upgrade the same exact call, but never a distinct call.
     afterToolCall(
       {
-        toolName: "openclawslack_blocks_send",
+        toolName: "openclawslack_send_blocks",
         runId: "run-reversed",
         toolCallId: "call-1",
         result: { content: [{ type: "text", text: "relayed" }] },
       },
       {
-        toolName: "openclawslack_blocks_send",
+        toolName: "openclawslack_send_blocks",
         runId: "run-reversed",
         toolCallId: "call-1",
       },
     );
     afterToolCall(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-reversed",
         toolCallId: "call-1",
         result: sentToolResult,
       },
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-reversed",
         toolCallId: "call-1",
       },
@@ -451,13 +482,13 @@ describe("Block Kit completion hooks", () => {
 
     afterToolCall(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-failed",
         result: {
           details: { ok: false, status: "partial_failed", complete: false },
         },
       },
-      { toolName: "slack_blocks_send", runId: "run-failed" },
+      { toolName: "slack_send_blocks", runId: "run-failed" },
     );
     afterToolCall(
       {
@@ -469,7 +500,7 @@ describe("Block Kit completion hooks", () => {
     );
     afterToolCall(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-context-mismatch",
         result: sentToolResult,
       },
@@ -477,28 +508,28 @@ describe("Block Kit completion hooks", () => {
     );
     afterToolCall(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-a",
         result: sentToolResult,
       },
-      { toolName: "slack_blocks_send", runId: "run-b" },
+      { toolName: "slack_send_blocks", runId: "run-b" },
     );
     afterToolCall(
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-call-id-mismatch",
         toolCallId: "call-a",
         result: sentToolResult,
       },
       {
-        toolName: "slack_blocks_send",
+        toolName: "slack_send_blocks",
         runId: "run-call-id-mismatch",
         toolCallId: "call-b",
       },
     );
     afterToolCall(
-      { toolName: "slack_blocks_send", result: sentToolResult },
-      { toolName: "slack_blocks_send" },
+      { toolName: "slack_send_blocks", result: sentToolResult },
+      { toolName: "slack_send_blocks" },
     );
 
     expect(store.size).toBe(4);
@@ -565,15 +596,15 @@ describe("Block Kit completion hooks", () => {
   });
 });
 
-describe("isCompletedSlackBlocksSendResult", () => {
+describe("isCompletedSlackSendBlocksResult", () => {
   it("requires an explicit complete sent receipt", () => {
-    expect(isCompletedSlackBlocksSendResult(sentToolResult)).toBe(true);
+    expect(isCompletedSlackSendBlocksResult(sentToolResult)).toBe(true);
     expect(
-      isCompletedSlackBlocksSendResult({
+      isCompletedSlackSendBlocksResult({
         details: { ok: true, status: "sent", complete: false },
       }),
     ).toBe(false);
-    expect(isCompletedSlackBlocksSendResult("sent")).toBe(false);
+    expect(isCompletedSlackSendBlocksResult("sent")).toBe(false);
   });
 });
 

@@ -4,7 +4,7 @@ export const COMPLETED_RUN_TTL_MS = 5 * 60_000;
 export const MAX_COMPLETED_RUNS = 1_024;
 export const MAX_TOOL_CALLS_PER_RUN = 256;
 
-const TOOL_NAME = "slack_blocks_send";
+const TOOL_NAME = "slack_send_blocks";
 
 type RunRef = {
   runId?: string;
@@ -93,7 +93,7 @@ export function isSuppressiblePlainTextFinal(payload: unknown): boolean {
   );
 }
 
-export function isCompletedSlackBlocksSendResult(result: unknown): boolean {
+export function isCompletedSlackSendBlocksResult(result: unknown): boolean {
   if (!isObject(result) || !isObject(result.details)) {
     return false;
   }
@@ -262,7 +262,7 @@ export function registerCompletionHooks(
         event.toolName === TOOL_NAME &&
         context.toolName === TOOL_NAME &&
         event.error === undefined &&
-        isCompletedSlackBlocksSendResult(event.result),
+        isCompletedSlackSendBlocksResult(event.result),
     });
   });
 
@@ -288,7 +288,7 @@ export function registerCompletionHooks(
       // multiple payloads, and every final chunk must remain suppressed.
       return {
         cancel: true,
-        reason: "slack_blocks_send already delivered the visible final response",
+        reason: "slack_send_blocks already delivered the visible final response",
       };
     },
     // Run after transforms and audit hooks. This is only a final duplicate

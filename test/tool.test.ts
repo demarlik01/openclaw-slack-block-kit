@@ -3,7 +3,7 @@ import type {
   OpenClawPluginToolContext,
 } from "openclaw/plugin-sdk/plugin-entry";
 import { describe, expect, it, vi } from "vitest";
-import { createSlackBlocksSendTool } from "../src/tool.js";
+import { createSlackSendBlocksTool } from "../src/tool.js";
 
 function createApi() {
   return {
@@ -48,7 +48,13 @@ const messages = [
   },
 ];
 
-describe("slack_blocks_send", () => {
+describe("slack_send_blocks", () => {
+  it("exposes the canonical public tool name", () => {
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), vi.fn() as never);
+
+    expect(tool.name).toBe("slack_send_blocks");
+  });
+
   it.each([
     ["missing input", undefined],
     ["null input", null],
@@ -76,7 +82,7 @@ describe("slack_blocks_send", () => {
     ],
   ])("returns INVALID_ARGUMENT for %s without sending", async (_label, rawInput) => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-invalid-input", rawInput);
 
@@ -93,7 +99,7 @@ describe("slack_blocks_send", () => {
 
   it("returns actionable issues for the malformed live flattened shape", async () => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-flat-live-shape", {
       fallbackText: "Ready",
@@ -118,7 +124,7 @@ describe("slack_blocks_send", () => {
 
   it("caps schema validation issues before returning them", async () => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
     const rawInput = Object.fromEntries(
       Array.from({ length: 100 }, (_, index) => [`unexpected${index}`, index]),
     );
@@ -135,7 +141,7 @@ describe("slack_blocks_send", () => {
 
   it("returns INVALID_BLOCK_KIT for a JSON-unsafe block value without sending", async () => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-json-unsafe", {
       messages: [
@@ -157,7 +163,7 @@ describe("slack_blocks_send", () => {
 
   it("returns INVALID_BLOCK_KIT for a circular block without sending", async () => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
     const circularBlock: Record<string, unknown> = { type: "future_display_block" };
     circularBlock.self = circularBlock;
 
@@ -186,7 +192,7 @@ describe("slack_blocks_send", () => {
       receipt: { id: "receipt-1", parts: [] },
       payloadOutcomes: [{ index: 0, status: "sent", results: [platformResult] }],
     }));
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-1", { messages });
 
@@ -237,7 +243,7 @@ describe("slack_blocks_send", () => {
       receipt: { id: "receipt-empty-outcomes", parts: [] },
       payloadOutcomes: [],
     }));
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-empty-outcomes", { messages });
 
@@ -259,7 +265,7 @@ describe("slack_blocks_send", () => {
       receipt: { id: "receipt-incomplete", parts: [] },
       payloadOutcomes: [],
     }));
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-incomplete", { messages });
 
@@ -275,7 +281,7 @@ describe("slack_blocks_send", () => {
 
   it("does not send in validate-only mode", async () => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-2", { messages, validateOnly: true });
 
@@ -288,7 +294,7 @@ describe("slack_blocks_send", () => {
 
   it("rejects a missing current Slack route", async () => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(
+    const tool = createSlackSendBlocksTool(
       createApi(),
       createContext({ deliveryContext: { channel: "telegram", to: "chat:123" } }),
       sendBatch as never,
@@ -308,7 +314,7 @@ describe("slack_blocks_send", () => {
 
   it("prevalidates the full batch before sending", async () => {
     const sendBatch = vi.fn();
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-4", {
       messages: [
@@ -369,7 +375,7 @@ describe("slack_blocks_send", () => {
         },
       ],
     }));
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-5", { messages: [...messages, ...messages] });
 
@@ -408,7 +414,7 @@ describe("slack_blocks_send", () => {
         },
       ],
     }));
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-6", { messages });
 
@@ -439,7 +445,7 @@ describe("slack_blocks_send", () => {
         },
       ],
     }));
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-mixed", { messages: [...messages, ...messages] });
     const serialized = JSON.stringify(result.details);
@@ -464,7 +470,7 @@ describe("slack_blocks_send", () => {
     const sendBatch = vi.fn(async () => {
       throw new Error(`Slack failed with ${fakeCredential} ${fakeAssignment}`);
     });
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-7", { messages });
     const serialized = JSON.stringify(result.details);
@@ -494,7 +500,7 @@ describe("slack_blocks_send", () => {
         },
       ],
     }));
-    const tool = createSlackBlocksSendTool(createApi(), createContext(), sendBatch as never);
+    const tool = createSlackSendBlocksTool(createApi(), createContext(), sendBatch as never);
 
     const result = await tool.execute("call-8", { messages });
 

@@ -90,7 +90,7 @@ try {
     details: { ok: true, status: "sent", complete: true },
   };
   const toolContext = {
-    toolName: "slack_blocks_send",
+    toolName: "slack_send_blocks",
     runId: RUN_ID,
     sessionKey: SESSION_KEY,
     toolCallId: TOOL_CALL_ID,
@@ -98,7 +98,7 @@ try {
 
   await afterToolCall(
     {
-      toolName: "slack_blocks_send",
+      toolName: "slack_send_blocks",
       runId: RUN_ID,
       toolCallId: TOOL_CALL_ID,
       result: sentResult,
@@ -107,12 +107,12 @@ try {
   );
   await afterToolCall(
     {
-      toolName: "openclawslack_blocks_send",
+      toolName: "openclawslack_send_blocks",
       runId: RUN_ID,
       toolCallId: TOOL_CALL_ID,
       result: { content: [{ type: "text", text: "relayed" }] },
     },
-    { ...toolContext, toolName: "openclawslack_blocks_send" },
+    { ...toolContext, toolName: "openclawslack_send_blocks" },
   );
   assert.equal(store.matches({ runId: RUN_ID, sessionKey: SESSION_KEY }), true);
 

@@ -10,8 +10,8 @@ import {
   type DurableMessageBatchSendResult,
 } from "openclaw/plugin-sdk/channel-outbound";
 import { normalizeSlackError } from "./errors.js";
-import { SlackBlocksSendSchema } from "./schema.js";
-import type { SlackBlocksSendInput, ValidationIssue } from "./types.js";
+import { SlackSendBlocksSchema } from "./schema.js";
+import type { SlackSendBlocksInput, ValidationIssue } from "./types.js";
 import { validateSlackMessages } from "./validator.js";
 
 type DurableSender = typeof sendDurableMessageBatch;
@@ -47,14 +47,14 @@ function jsonResult(value: unknown) {
 }
 
 function parseToolInput(rawInput: unknown):
-  | { ok: true; input: SlackBlocksSendInput }
+  | { ok: true; input: SlackSendBlocksInput }
   | { ok: false; issues: ValidationIssue[] } {
-  if (Check(SlackBlocksSendSchema, rawInput)) {
+  if (Check(SlackSendBlocksSchema, rawInput)) {
     return { ok: true, input: rawInput };
   }
 
   const issues: ValidationIssue[] = [];
-  for (const error of Errors(SlackBlocksSendSchema, rawInput)) {
+  for (const error of Errors(SlackSendBlocksSchema, rawInput)) {
     if (issues.length >= 50) {
       break;
     }
@@ -208,17 +208,17 @@ function inputFailure(issues: ValidationIssue[]) {
   });
 }
 
-export function createSlackBlocksSendTool(
+export function createSlackSendBlocksTool(
   api: OpenClawPluginApi,
   context: OpenClawPluginToolContext,
   sendBatch: DurableSender = sendDurableMessageBatch,
 ) {
   return {
-    name: "slack_blocks_send",
-    label: "Slack Block Kit send",
+    name: "slack_send_blocks",
+    label: "Send Slack Block Kit",
     description:
       'Send display-only raw Slack Block Kit to the current Slack conversation. Use {"messages":[{"text":"fallback","blocks":[...]}],"validateOnly":false}; text and blocks are never top-level fields.',
-    parameters: SlackBlocksSendSchema,
+    parameters: SlackSendBlocksSchema,
     async execute(_id: string, rawInput: unknown, signal?: AbortSignal) {
       const parsedInput = parseToolInput(rawInput);
       if (!parsedInput.ok) {

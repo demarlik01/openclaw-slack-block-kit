@@ -14,7 +14,7 @@ export type ValidationResult =
   | { ok: true; warnings: ValidationIssue[] }
   | { ok: false; issues: ValidationIssue[]; warnings: ValidationIssue[] };
 
-export type SlackBlocksSendInput = {
+export type SlackSendBlocksInput = {
   messages: SlackMessageInput[];
   validateOnly?: boolean;
 };

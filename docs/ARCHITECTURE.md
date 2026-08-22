@@ -20,7 +20,7 @@ OpenClaw의 공통 `presentation`을 기본 경로로 사용한다. 이 플러�
   → core message + presentation
 
 Slack message-surface 전용 표현 필요
-  → slack_blocks_send + raw channelData.slack.blocks
+  → slack_send_blocks + raw channelData.slack.blocks
 
 modal / App Home / external select / file·video workflow 필요
   → 이 플러그인의 범위 밖, 별도 Slack application surface
@@ -34,7 +34,7 @@ modal / App Home / external select / file·video workflow 필요
 
 ### 목표
 
-- 선택형 에이전트 도구 `slack_blocks_send` 제공
+- 선택형 에이전트 도구 `slack_send_blocks` 제공
 - 현재 실행 중인 Slack 대화와 스레드를 자동 상속
 - 여러 메시지를 순서대로 한 번에 전송
 - 각 메시지에 필수 fallback `text`와 raw `blocks` 전달
@@ -81,7 +81,7 @@ modal / App Home / external select / file·video workflow 필요
 | 구성요소 | 책임 | 하지 않는 일 |
 |---|---|---|
 | Producer | 데이터 조회, 정렬, 페이지 분할, fallback text와 완성된 blocks 생성 | 채널·계정·스레드 추측, Slack API 호출 |
-| `slack_blocks_send` | 현재 route 확인, 최소 검증, durable 전송, 결과 정규화 | blocks 재작성, 업무 정책 판정 |
+| `slack_send_blocks` | 현재 route 확인, 최소 검증, durable 전송, 결과 정규화 | blocks 재작성, 업무 정책 판정 |
 | OpenClaw outbound runtime | 인증, hook, queue, Slack adapter 호출, receipt, 복구 | Slack 전용 UI 설계 |
 | Slack API | 최신 Block Kit 스키마와 워크스페이스 권한 최종 검증 | producer 버그 자동 수정 |
 
@@ -90,10 +90,10 @@ payload는 명시적으로 거부한다.
 
 ## 5. 공개 도구 계약
 
-### `slack_blocks_send`
+### `slack_send_blocks`
 
 ```typescript
-type SlackBlocksSendInput = {
+type SlackSendBlocksInput = {
   messages: Array<{
     text: string;
     blocks: Array<Record<string, unknown>>;
@@ -184,7 +184,7 @@ type SlackBlocksSendInput = {
 ```text
 plugin.register
   ├─ defineToolPlugin.register
-  │    └─ static tool: slack_blocks_send (optional)
+  │    └─ static tool: slack_send_blocks (optional)
   │         └─ factory(toolContext)
   │              ├─ Slack surface가 아니면 null
   │              └─ Slack이면 현재 deliveryContext를 캡처한 tool 반환
@@ -197,8 +197,8 @@ plugin.register
 `openclaw plugins build`가 다음 manifest metadata를 생성한다.
 
 - `activation`
-- `contracts.tools: ["slack_blocks_send"]`
-- `toolMetadata.slack_blocks_send.optional: true`
+- `contracts.tools: ["slack_send_blocks"]`
+- `toolMetadata.slack_send_blocks.optional: true`
 - `configSchema`
 
 tool 이름이나 schema가 바뀌면 generator와 `openclaw plugins validate`를 반드시 다시 실행한다.
@@ -232,7 +232,7 @@ thread   = deliveryContext.threadId
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant T as slack_blocks_send
+    participant T as slack_send_blocks
     participant D as OpenClaw durable outbound
     participant S as Slack adapter
     participant API as Slack API
@@ -335,7 +335,7 @@ raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성�
 2. delivery safety hook
    - `after_tool_call`에서 같은 run의 모든 tool completion을 관찰한다.
    - 해당 run에서 관찰된 호출이 전부 `ok: true`, `status: sent`, `complete: true`인
-     `slack_blocks_send`일 때만 suppression eligible이다.
+     `slack_send_blocks`일 때만 suppression eligible이다.
    - 다른 도구, 검증 전용, 실패·부분 성공 호출을 하나라도 관찰하면 해당 run은 TTL 동안
      sticky하게 ineligible이며, 나중의 성공한 Slack 호출이 다시 활성화하지 못한다.
    - 한 실제 호출을 harness와 native relay가 서로 다른 정규화 이름으로 중복 관찰할 수 있으므로
@@ -526,7 +526,7 @@ run이 정상 완료되었다면 이는 예상 가능한 진단이며 smoke 실�
 ### v1 — raw message escape hatch
 
 - `defineToolPlugin`과 generated manifest
-- optional `slack_blocks_send`
+- optional `slack_send_blocks`
 - current-route only
 - messages batch
 - minimal guard validator

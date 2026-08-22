@@ -13,7 +13,7 @@ channel ID를 모델에 넘길 필요가 없습니다.
 | 원하는 결과 | 권장 경로 |
 |---|---|
 | 일반 텍스트, 구분선, 버튼/select가 있는 범용 카드 | OpenClaw 기본 `message` + `presentation` |
-| image accessory, 정밀한 fields, `rich_text`, `table`, `data_visualization` | 이 플러그인의 `slack_blocks_send` |
+| image accessory, 정밀한 fields, `rich_text`, `table`, `data_visualization` | 이 플러그인의 `slack_send_blocks` |
 | raw interaction handler, modal, App Home, 파일·비디오 workflow | 이 플러그인의 범위 밖 |
 
 이 플러그인은 모든 답변을 Block Kit으로 바꾸지 않습니다. Slack 전용 레이아웃이 꼭 필요할
@@ -40,7 +40,7 @@ openclaw plugins enable slack-block-kit
 
 ### 2. 사용할 에이전트에 optional tool 허용
 
-권장 방식은 해당 에이전트의 기존 설정에 `slack_blocks_send`만 추가하는 것입니다.
+권장 방식은 해당 에이전트의 기존 설정에 `slack_send_blocks`만 추가하는 것입니다.
 
 ```json5
 {
@@ -48,7 +48,7 @@ openclaw plugins enable slack-block-kit
     list: [
       {
         id: "my-agent",
-        tools: { alsoAllow: ["slack_blocks_send"] },
+        tools: { alsoAllow: ["slack_send_blocks"] },
       },
     ],
   },
@@ -56,7 +56,7 @@ openclaw plugins enable slack-block-kit
 ```
 
 이미 같은 scope에 `tools.allow`가 있다면 `allow`와 `alsoAllow`를 함께 쓸 수 없습니다. 그 경우
-기존 `allow` 배열에 `slack_blocks_send`를 추가하세요. `slack-block-kit` 또는
+기존 `allow` 배열에 `slack_send_blocks`를 추가하세요. `slack-block-kit` 또는
 `group:plugins`도 허용 항목으로 사용할 수 있지만, 필요한 도구 하나만 허용하는 편이 안전합니다.
 
 ### 3. Gateway에 로드하고 확인
@@ -66,7 +66,7 @@ openclaw plugins inspect slack-block-kit --runtime --json
 openclaw gateway status
 ```
 
-runtime inspect 결과에 `slack_blocks_send`와 플러그인 hooks가 보이고 Gateway가 정상이면 준비가
+runtime inspect 결과에 `slack_send_blocks`와 플러그인 hooks가 보이고 Gateway가 정상이면 준비가
 끝났습니다. managed Gateway는 보통 설치·설정 변경을 감지해 재시작합니다. 자동 reload가 되지
 않았거나 linked source를 수정했다면 `pnpm build` 후 `openclaw gateway restart`를 한 번만 실행해
 새 `dist/`를 로드하세요.
@@ -77,7 +77,7 @@ Slack에서 에이전트에게 자연어로 요청하면 됩니다.
 
 ```text
 아래 후보들을 이미지가 붙은 Slack 카드로 정리해서 현재 스레드에 보내줘.
-slack_blocks_send를 마지막 도구로 한 번만 사용해.
+slack_send_blocks를 마지막 도구로 한 번만 사용해.
 ```
 
 성공하면 다음과 같이 동작합니다.
@@ -164,7 +164,7 @@ Slack API가 최신 block 조합을 실제로 받아준다는 것까지 보장�
 1. 현재 요청이 Slack에서 시작됐는지 확인합니다. 도구는 Slack surface에서만 노출됩니다.
 2. `openclaw plugins inspect slack-block-kit --runtime --json`으로 등록 상태를 확인합니다.
 3. `plugins.allow`가 설정되어 있다면 `slack-block-kit`이 포함됐는지 확인합니다.
-4. 에이전트의 `tools.allow` 또는 `tools.alsoAllow`에 `slack_blocks_send`가 있는지 확인합니다.
+4. 에이전트의 `tools.allow` 또는 `tools.alsoAllow`에 `slack_send_blocks`가 있는지 확인합니다.
 5. sandboxed agent라면 sandbox tool policy에도 이 plugin tool이 허용됐는지 확인합니다.
 
 ### `INVALID_ARGUMENT`
@@ -234,7 +234,7 @@ openclaw agent --local \
   --agent my-agent \
   --session-key sbk-local-validate-UNIQUE \
   --channel slack \
-  --message 'Call slack_blocks_send once with validateOnly=true, then reply PROBE_OK.' \
+  --message 'Call slack_send_blocks once with validateOnly=true, then reply PROBE_OK.' \
   --json
 ```
 

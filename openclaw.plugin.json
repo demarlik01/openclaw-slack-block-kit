@@ -13,11 +13,11 @@
   },
   "contracts": {
     "tools": [
-      "slack_blocks_send"
+      "slack_send_blocks"
     ]
   },
   "toolMetadata": {
-    "slack_blocks_send": {
+    "slack_send_blocks": {
       "optional": true
     }
   }
