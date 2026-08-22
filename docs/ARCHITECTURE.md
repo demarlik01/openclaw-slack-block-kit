@@ -1,10 +1,14 @@
 # OpenClaw Slack Block Kit 아키텍처
 
+한국어(기준 원문) · [English](ARCHITECTURE.en.md)
+
 > 상태: v1 구현 기준 문서
 > 기준 런타임: OpenClaw `2026.7.1-2`
 > 범위: 현재 Slack 대화에 보내는 message-surface raw Block Kit
 
-이 문서는 프로젝트의 유일한 규범적 아키텍처 문서다.
+이 한국어 문서는 프로젝트의 기준 규범적 아키텍처 문서다.
+[영문판](ARCHITECTURE.en.md)은 같은 계약을 유지하는 규범적 번역본이며, 두 문서가 어긋나면
+이 한국어 원문을 우선한다.
 
 ## 1. 결론
 
@@ -417,7 +421,8 @@ native durable queue는 platform send 전후의 crash와 unknown-send 복구를 
 ```text
 openclaw-slack-block-kit/
 ├── docs/
-│   ├── ARCHITECTURE.md       # 규범적 설계
+│   ├── ARCHITECTURE.md       # 기준 규범적 설계
+│   ├── ARCHITECTURE.en.md    # 영문 규범적 번역본
 ├── scripts/
 │   └── verify-completion-pipeline.mjs # fresh-process completion probe
 ├── src/

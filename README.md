@@ -6,6 +6,8 @@ OpenClaw 에이전트가 **현재 Slack 채널·DM·스레드**에 표, 이미�
 기존 OpenClaw Slack 연결과 현재 대화 목적지를 그대로 사용하므로 별도 Slack token이나
 channel ID를 모델에 넘길 필요가 없습니다.
 
+설계 문서: [한국어(기준)](docs/ARCHITECTURE.md) · [English](docs/ARCHITECTURE.en.md)
+
 ## 언제 사용하나요?
 
 | 원하는 결과 | 권장 경로 |
@@ -240,4 +242,5 @@ openclaw agent --local \
 fresh-process 검증이 끝난 뒤 최종 live smoke 직전에만 Gateway를 재시작하세요.
 
 정확한 설계 계약, 검증 한도, completion fail-open 규칙과 오류 모델은
-[아키텍처 문서](docs/ARCHITECTURE.md)를 참고하세요.
+[한국어 아키텍처(기준)](docs/ARCHITECTURE.md) 또는
+[English architecture](docs/ARCHITECTURE.en.md)를 참고하세요.
