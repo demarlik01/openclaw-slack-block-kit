@@ -2,66 +2,114 @@
 
 **English** | [한국어](README.ko.md)
 
-Send tables, image cards, precise field layouts, and other Slack-native Block Kit
-messages from an OpenClaw agent to the **current Slack channel, DM, or thread**.
+Turn structured OpenClaw answers into Slack-native dashboards, tables, image cards,
+and other Block Kit layouts.
 
-- Reuses the Slack connection already configured in OpenClaw.
-- Inherits the current conversation and thread automatically.
-- Never asks the model for a Slack token or channel ID.
-- Exposes one Slack-only tool: `slack_send_blocks`.
+- Sends to the **current Slack channel, DM, or thread** automatically.
+- Reuses the Slack connection already configured in OpenClaw—no token or channel ID
+  is exposed to the model.
+- Adds one Slack-only tool, `slack_send_blocks`, without turning every reply into a
+  card.
 
 ## Before / After
 
-The same fictional sales report rendered as a normal reply and as Block Kit.
+The same fictional sales report rendered as a normal reply and with Block Kit.
 
 | Plain text reply | With `slack_send_blocks` |
 |:---:|:---:|
 | ![A long fictional sales report rendered as plain Slack text](docs/images/before-en.png) | ![The same fictional sales report organized as a Slack dashboard with summary fields and a table](docs/images/after-en.png) |
-
-## Choose the right path
-
-| Need | Use |
-|---|---|
-| Plain text or a portable card that works across channels | OpenClaw core `message` + `presentation` |
-| Slack-native layout control, image accessories, precise `section.fields`, `rich_text`, or block combinations that `presentation` cannot express | This plugin's `slack_send_blocks` |
-| Buttons/selects with callbacks, modals, App Home, or file/video workflows | A dedicated interactive Slack integration |
-
-Use core `presentation` whenever it is sufficient. This plugin is a display-only escape
-hatch for messages that genuinely need raw Slack Block Kit; it does not convert every
-agent reply into a card.
 
 ## Install
 
 Requirements:
 
 - OpenClaw `2026.7.1-2` or later
-- A Slack connection that already works in OpenClaw
+- A working Slack connection in OpenClaw
 
-### ClawHub (recommended)
+Install from ClawHub:
 
 ```bash
 openclaw plugins install clawhub:openclaw-slack-block-kit
 ```
 
-ClawHub is the primary discovery and install path for this plugin.
-
-### npm (direct-install fallback)
+Or install directly from npm:
 
 ```bash
 openclaw plugins install npm:openclaw-slack-block-kit
 ```
 
-### Tool visibility and policy
+No separate Slack credential or destination configuration is needed. If you request a
+Block Kit message from Slack and `slack_send_blocks` still does not appear, enable it in
+**Control UI → Agents → select your agent → Tools**, then select **Save**. New local
+OpenClaw onboarding commonly sets the `coding` tool profile, which excludes third-party
+plugin tools. See [Troubleshooting](#the-tool-does-not-appear) for CLI and policy details.
 
-Installing and enabling this single-purpose plugin is the opt-in; its tool is created
-only for Slack turns. No separate `openclaw.json` edit beyond installation is needed
-when `plugins.allow` is unset or includes `slack-block-kit`, the effective tool profile
-is unset or `full`, no restrictive allow or deny policy applies, and the agent is
-either not sandboxed or its sandbox tool policy already grants `slack_send_blocks`.
+## Use it from Slack
 
-New local OpenClaw setups commonly use `tools.profile: "coding"`, which excludes
-third-party plugin tools. With `coding`, `messaging`, or `minimal`, merge this into the
-affected global or agent `tools` scope:
+Start in the Slack conversation where you want the result, then ask naturally:
+
+```text
+Show today's sales as a Slack dashboard with a concise summary and comparison table in this thread.
+```
+
+The agent can choose Block Kit when the answer benefits from a structured layout. To
+request it explicitly, name the tool:
+
+```text
+Use slack_send_blocks to show these candidates as image cards in the current thread.
+```
+
+The message is always sent back to the Slack channel, DM, or thread where the request
+started. The tool cannot redirect it to another destination. For a different channel
+or thread, use OpenClaw's core `message` tool.
+
+After a successful send, the Block Kit message is normally the final answer, without a
+duplicate plain-text reply. Each message still includes fallback text for Slack
+notifications and accessibility.
+
+## What it supports
+
+- Comparisons, ranked results, status summaries, multi-field records, tables, image
+  cards, grouped sections, and data visualizations
+- Locally recognized display blocks with safety validation: `section` (including
+  `fields` and an image accessory), `header`, `context`, `divider`, and `image`
+- Raw passthrough for `rich_text`, `table`, `data_visualization`, and unknown
+  message-surface blocks; common structure, size, URL, and safety checks run locally,
+  while Slack validates their detailed schema
+- 1–10 messages per call, in order; 1–50 blocks per message
+- Required fallback text of 1–4,000 characters per message
+- OpenClaw's existing Slack authentication, outbound queue, hooks, and delivery receipts
+
+This plugin is display-only. It does not support buttons, selects, inputs, or any other
+element that requires an `action_id`; nor does it handle modals, App Home, or
+`file`/`video`/`call` lifecycles.
+
+For a portable layout across channels, use OpenClaw's core `message` tool with
+`presentation`; use this plugin when you specifically need raw Slack Block Kit.
+
+## Troubleshooting
+
+### The tool does not appear
+
+1. Start the request from Slack. The tool is intentionally hidden on other surfaces.
+2. In **Control UI → Agents → select your agent → Tools**, enable
+   `slack_send_blocks`, then select **Save**.
+3. Inspect the loaded runtime:
+
+   ```bash
+   openclaw plugins inspect slack-block-kit --runtime --json
+   openclaw gateway status
+   ```
+
+4. If the plugin is disabled, run `openclaw plugins enable slack-block-kit`. If the old
+   runtime is still loaded, run `openclaw gateway restart` once.
+5. If `plugins.allow` is configured, make sure it includes `slack-block-kit`.
+
+<details>
+<summary>Advanced tool policy setup</summary>
+
+Profiles such as `coding`, `messaging`, and `minimal` exclude third-party plugin tools.
+Grant the tool in the affected global or agent scope:
 
 ```json5
 {
@@ -71,79 +119,36 @@ affected global or agent `tools` scope:
 }
 ```
 
-If that same scope already has `tools.allow`, add `slack_send_blocks` to its existing
-`allow` array instead; OpenClaw rejects `allow` and `alsoAllow` together in one scope.
-An agent-level `tools.alsoAllow` replaces the global additive list, so if one is
-present, add `slack_send_blocks` to that agent's list too. If a provider- or
-model-specific policy is the filtering layer, grant the tool at the matching
-`tools.byProvider["<provider>"]` or `tools.byProvider["<provider>/<model>"]` scope (or
-the corresponding per-agent scope).
+If that scope already has `tools.allow`, add the tool to that array instead. Sandboxed
+agents also need the plugin id `slack-block-kit` in `tools.sandbox.tools.alsoAllow` (or
+the existing sandbox `allow` array), even when no sandbox tool policy is configured.
+Use `group:plugins` instead only to allow every plugin tool. For read-only Control UI
+panels or agent/provider-specific policies, see [OpenClaw tool profiles and
+policies](https://docs.openclaw.ai/gateway/config-tools).
 
-A sandboxed agent always needs the same grant in `tools.sandbox.tools.alsoAllow` (or
-its existing `allow` array), because OpenClaw's default sandbox allowlist excludes
-plugin tools even when no sandbox tool policy is configured. To opt a specific agent
-out, add `slack_send_blocks` to that agent's `tools.deny`.
+</details>
 
-### Verify
+### A send fails
 
-```bash
-openclaw plugins inspect slack-block-kit --runtime --json
-openclaw gateway status
-```
+- `INVALID_ARGUMENT`: check that each item in `messages[]` contains both `text` and
+  `blocks`.
+- `INVALID_BLOCK_KIT`: follow `error.issues[].path` and fix the reported block, URL,
+  nesting, duplicate ID, or interactive element.
+- `INVALID_ROUTE`: start the request from a real Slack channel, DM, or thread.
+- `RUNTIME_CONFIG_UNAVAILABLE`: check that the Gateway and plugin runtime are loaded,
+  then retry.
+- `SLACK_API_ERROR` (for example, `message: "invalid_blocks"`): compare the payload
+  with Slack's current block reference or test it in
+  [Block Kit Builder](https://app.slack.com/block-kit-builder).
+- `SLACK_RATE_LIMITED`: wait `retryAfter` seconds when provided; otherwise back off
+  briefly before retrying.
 
-The runtime output should show `slack_send_blocks` and the plugin hooks. Plugin installs
-normally trigger a managed Gateway restart; if the new runtime is not loaded, run
-`openclaw gateway restart` once. If inspection reports the plugin as disabled, run
-`openclaw plugins enable slack-block-kit`.
+## Advanced usage
 
-## Use it from Slack
+<details>
+<summary>Exact tool input and validation</summary>
 
-Ask naturally from the Slack conversation where the result should appear:
-
-```text
-Show today's sales as a Slack dashboard with a concise summary and comparison table in this thread.
-```
-
-The tool description tells the agent when a Slack-native layout is appropriate. If you
-want to force the exact path, mention it explicitly:
-
-```text
-Use slack_send_blocks to show these candidates as image cards in the current thread.
-```
-
-On a successful send, the Block Kit message is the final answer. A second plain-text
-reply is intentionally not added. Every message still includes fallback `text` for
-Slack notifications and accessibility.
-
-The destination cannot be overridden through tool input. To send explicitly to a
-different channel, account, or thread, use OpenClaw's core `message` tool instead.
-
-## What it supports
-
-- 1–10 messages per call, delivered in input order
-- 1–50 blocks per message
-- Required fallback `text` of 1–4,000 characters per message
-- `section`, `fields`, image accessories, `context`, `header`, `divider`, and `image`
-- Passthrough for `rich_text`, `table`, and new message-surface blocks
-- Current Slack channel/DM/thread inheritance
-- OpenClaw's existing Slack auth, durable outbound queue, hooks, and receipts
-
-Not supported in v1:
-
-- Interactive elements that require an `action_id`
-- `actions` and `input` blocks
-- Modals and App Home
-- External-select option loading
-- `file`, `video`, and `call` block lifecycles
-- Atomic multi-message delivery
-
-Unknown message blocks are forwarded without being rewritten. Slack's API remains the
-final authority on whether a block combination is valid for the current workspace and
-message surface.
-
-## Advanced: exact tool input
-
-The public input envelope is:
+The agent normally builds this payload for you. The public input envelope is:
 
 ```json
 {
@@ -167,54 +172,25 @@ The public input envelope is:
 }
 ```
 
-`text` and `blocks` belong inside every `messages[]` item. Flat top-level `text` or
-`blocks`, missing fields, extra fields, and wrong types are rejected with
-`INVALID_ARGUMENT`.
+`text` and `blocks` belong inside every `messages[]` item. Flat top-level fields,
+missing fields, extra fields, and wrong types are rejected.
 
 `validateOnly: true` runs local structure, size, and safety checks without sending to
-Slack. It does not guarantee that Slack will accept every new block combination.
+Slack. It does not guarantee that Slack will accept every block combination.
 
-Multi-message calls are not atomic. After a `partial_failed` result, retry only the
-failed indexes; retrying the entire batch can duplicate messages that already succeeded.
+Multi-message sends are not atomic. After a `partial_failed` result, retry only the
+failed indexes to avoid duplicating messages that already succeeded.
 
-## Troubleshooting
-
-### The tool does not appear
-
-1. Start the request from Slack; the tool is hidden on other surfaces.
-2. Run `openclaw plugins inspect slack-block-kit --runtime --json`.
-3. If `plugins.allow` is configured, include `slack-block-kit`.
-4. If `tools.profile` is `coding`, `messaging`, or `minimal`, or the agent uses a
-   restrictive `tools.allow`, grant `slack_send_blocks` with `tools.alsoAllow` (or add
-   it to the existing `allow` array at that scope).
-5. If the agent or matching `tools.byProvider` scope defines its own policy, grant the
-   tool there too; an agent-level `alsoAllow` replaces the global additive list.
-6. If the agent is sandboxed, grant `slack_send_blocks` in
-   `tools.sandbox.tools.alsoAllow` (or its existing `allow` array). This is required
-   even when no explicit sandbox tool policy is configured.
-
-### `INVALID_BLOCK_KIT`
-
-Follow `error.issues[].path` and correct the reported block count, URL, nesting depth,
-duplicate ID, or unsupported interactive element.
-
-### `INVALID_ROUTE`
-
-The tool did not receive the current Slack delivery context. Start the request from an
-actual Slack channel, DM, or thread rather than Telegram, CLI, or another surface.
-
-### Slack returns `invalid_blocks`
-
-The payload passed local safety checks, but Slack rejected the current block combination.
-Check it against Slack's current block reference or prototype it in Block Kit Builder.
+</details>
 
 ## Security
 
-- No separate Slack token is accepted or stored.
-- The destination is taken only from the trusted current Slack route.
-- URL-bearing fields must contain valid `https:` URLs.
-- Model-facing errors omit tokens, full payloads, and internal stacks.
-- Do not place secrets or sensitive signed URLs in fallback text, blocks, or image URLs.
+- The plugin neither accepts nor stores a separate Slack token.
+- The destination comes only from the trusted current Slack route.
+- URL-bearing fields require valid `https:` URLs, and model-facing errors omit tokens,
+  full payloads, and internal stacks.
+
+Do not put secrets or sensitive signed URLs in fallback text, blocks, or image URLs.
 
 ## Develop from source
 
@@ -240,14 +216,10 @@ pnpm plugin:validate
 npm pack --dry-run
 ```
 
-The completion probe runs in a fresh process and sends nothing to Slack. See the
-architecture docs for the exact route, validation, durability, error, and fail-open
-completion contracts.
-
 ## References
 
 - Architecture: [English](docs/ARCHITECTURE.en.md) · [한국어](docs/ARCHITECTURE.md)
-- Slack: [Block Kit overview](https://docs.slack.dev/block-kit/) · [All blocks](https://docs.slack.dev/reference/block-kit/blocks/) · [Section and fields](https://docs.slack.dev/reference/block-kit/blocks/section-block/) · [Table](https://docs.slack.dev/reference/block-kit/blocks/table-block/) · [Block Kit Builder](https://app.slack.com/block-kit-builder)
+- Slack: [Block Kit overview](https://docs.slack.dev/block-kit/) · [Block reference](https://docs.slack.dev/reference/block-kit/blocks/) · [Block Kit Builder](https://app.slack.com/block-kit-builder)
 - OpenClaw: [Plugin installation](https://docs.openclaw.ai/cli/plugins) · [Tool profiles and policies](https://docs.openclaw.ai/gateway/config-tools) · [Building plugins](https://docs.openclaw.ai/plugins/building-plugins)
 
 ## License
