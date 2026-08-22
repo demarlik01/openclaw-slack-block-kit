@@ -63,9 +63,8 @@ modal / App Home / external select / file·video workflow 필요
 | 현재 Slack 채널/DM | 지원 | `deliveryContext.to` 사용 |
 | 현재 Slack 스레드 | 지원 | `deliveryContext.threadId` 상속 |
 | 여러 메시지 순차 전송 | 지원 | payload 순서 보존 |
-| section, fields, image, accessory | 지원 | Slack message surface 규격에 따름 |
-| rich_text, table, data_visualization 등 | passthrough | 워크스페이스·Slack API 지원 여부가 최종 판단 |
-| 알 수 없는 신규 message block | passthrough | 버전 drift를 막기 위해 allowlist로 차단하지 않음 |
+| section, header, context, divider, image, rich_text, table, data_visualization | 이름이 알려진 display passthrough | unknown 경고 없이 공통 guard를 적용하며 section accessory만 image로 제한 |
+| 알 수 없는 신규 message block | 경고를 동반한 passthrough | 버전 drift를 막기 위해 차단하지 않음 |
 | button/static select interaction | 거부 | v2에서 namespaced handler로 추가 |
 | actions/input block | 거부 | interaction 또는 view 전용 |
 | file/video/call block | 거부 | 별도 권한·등록·unfurl lifecycle 필요 |
@@ -73,8 +72,12 @@ modal / App Home / external select / file·video workflow 필요
 | external select | 미지원 | 별도 Options Load endpoint 필요 |
 | 파일·비디오 workflow | 미지원 | 별도 권한과 API lifecycle 필요 |
 
-“passthrough 지원”은 Slack이 실제로 수락한다고 보장한다는 뜻이 아니다. 플러그인은 payload를
-변형하지 않고 전달하며, Slack API가 최종 스키마 validator 역할을 한다.
+validator는 `section`, `header`, `context`, `divider`, `image`, `rich_text`, `table`,
+`data_visualization`을 하나의 알려진 display block 이름 집합으로 다룬다. 이 집합이 바꾸는 것은
+unknown warning 여부뿐이다. 알려진 여덟 type과 warning을 동반한 unknown type 모두 같은 공통
+구조·크기·URL·상호작용 guard를 거치며 세부 schema는 passthrough한다. 유일한 type-specific local
+rule은 section accessory가 image여야 한다는 것이다. 모든 허용 block은 raw payload 그대로
+전달되며, Slack API가 최종 schema validator다.
 
 ## 4. 핵심 구성요소와 책임
 
@@ -140,8 +143,11 @@ type SlackSendBlocksInput = {
   ],
   "nextAction": {
     "type": "silent_final",
-    "token": "NO_REPLY"
+    "token": "NO_REPLY",
+    "instruction": "The Block Kit message is already visible. Return exactly NO_REPLY with no other text."
   },
+  "suppressed": [],
+  "failed": [],
   "warnings": []
 }
 ```
@@ -159,16 +165,23 @@ type SlackSendBlocksInput = {
       "channelId": "C12345678"
     }
   ],
+  "suppressed": [],
   "failed": [
     {
       "index": 1,
       "stage": "platform_send",
+      "sentBeforeError": true,
       "error": {
         "code": "SLACK_API_ERROR",
         "message": "invalid_blocks"
       }
     }
-  ]
+  ],
+  "error": {
+    "code": "SLACK_API_ERROR",
+    "message": "invalid_blocks"
+  },
+  "warnings": []
 }
 ```
 
@@ -200,22 +213,39 @@ plugin.register
 - `contracts.tools: ["slack_send_blocks"]`
 - `configSchema`
 
-권한 수준의 `optional` metadata는 의도적으로 넣지 않는다. 이 단일 목적 플러그인을 설치하고
-활성화하는 것 자체를 일반적인 opt-in으로 보며, factory는 Slack turn이 아니면 계속 `null`을
-반환한다. 이는 플러그인 수준의 기본 노출만 정하는 결정이다. 전역·agent·provider의 유효한
-`tools.profile`, 명시적인 allow/deny 정책, sandbox tool policy가 계속 우선한다. `full` 외의
-profile에는 제3자 플러그인 도구가 기본으로 포함되지 않으므로 해당 scope의 `alsoAllow`
-(또는 기존 `allow` 배열)에 `slack_send_blocks`를 추가해야 한다.
-sandbox를 사용하는 agent는 sandbox 수준에서도 같은 허용이 필요하다. 명시적인
-sandbox tool policy가 없어도 OpenClaw의 기본 sandbox allowlist가 플러그인 도구를 제외한다.
+권한 수준의 `optional` metadata와 `toolMetadata`는 의도적으로 넣지 않는다. 이 단일 목적
+플러그인을 설치하고 활성화하는 것 자체를 일반적인 opt-in으로 보며, factory는 Slack turn이
+아니면 `null`을 반환한다. factory의 surface 판정은
+`deliveryContext.channel ?? messageChannel` 순서이며, 실제 전송은 아래의 더 엄격한 current-route
+검사를 다시 통과해야 한다.
+
+이 결정은 플러그인 등록 계층에서 required/default-visible이라는 뜻일 뿐, OpenClaw host policy를
+우회하지 않는다. 전역·agent·provider의 유효한 `tools.profile`과 allow/deny, 그리고 sandbox
+tool policy가 계속 우선한다.
+
+- 정상 tool policy: 제한된 profile 또는 allowlist에 추가할 값은 정확한 tool 이름
+  `slack_send_blocks`다. 같은 scope에서 `allow`와 `alsoAllow`를 함께 둘 수 없으므로 기존
+  `allow`가 있으면 그 배열에 넣고, 아니면 profile 위에 `alsoAllow`로 더한다.
+- local onboarding: 새 로컬 설정에서 값이 없을 때 `tools.profile: "coding"`을 설정하며, 기존의
+  명시적 profile은 보존한다. `coding`, `messaging`, `minimal`은 이 제3자 native plugin tool을
+  기본 포함하지 않는다. `full`과 unset은 profile 자체로 제한하지 않는다.
+- sandbox 추가 gate: 실제 sandboxed turn에서는 정상 policy를 통과한 뒤에도 별도 허용이 필요하다.
+  특정 native plugin만 열 때는 plugin id `slack-block-kit`, 모든 plugin tool을 열 때만
+  `group:plugins`를 `tools.sandbox.tools.alsoAllow` 또는 기존 sandbox `allow`에 쓴다. 명시적인
+  sandbox policy가 없어도 기본 sandbox allowlist에는 plugin tool이 없다.
 
 tool 이름이나 schema가 바뀌면 generator와 `openclaw plugins validate`를 반드시 다시 실행한다.
-runtime registration과 manifest 소유권이 다르면 플러그인은 로드되지 않아야 한다.
+runtime registration이 `contracts.tools` 소유권과 어긋나면 해당 tool registration이 skip되고
+diagnostic이 남는다. `plugin:metadata-check`와 `plugin:validate`는 이 drift를 release failure로
+취급해야 한다.
 
 ## 7. 현재 route 해석
 
-도구 factory가 받은 `OpenClawPluginToolContext.deliveryContext`만 신뢰한다. 여기서 “현재 route”는
-도구를 호출한 바로 그 Slack 채널 또는 DM과, 호출이 시작된 thread를 뜻한다.
+전송 목적지에는 도구 factory가 받은 `OpenClawPluginToolContext.deliveryContext`만 신뢰한다.
+여기서 “현재 route”는 도구를 호출한 바로 그 Slack 채널 또는 DM과, 호출이 시작된 thread를
+뜻한다. `messageChannel`은 factory 생성 여부의 fallback일 뿐 전송 route의 대체값이 아니다.
+
+실제 전송 route는 다음과 같다.
 
 ```text
 channel  = deliveryContext.channel  // 반드시 "slack"
@@ -224,7 +254,9 @@ account  = deliveryContext.accountId ?? agentAccountId
 thread   = deliveryContext.threadId
 ```
 
-다음 경우 도구를 노출하지 않거나 구조화 오류를 반환한다.
+`validateOnly: true`는 예외다. 입력과 block 검증을 마치면 route와 runtime config gate보다 먼저
+`validated`를 반환하며 durable sender를 호출하지 않는다. 실제 전송에서는 다음 경우 도구를
+노출하지 않거나 구조화 오류를 반환한다.
 
 - 현재 surface가 Slack이 아님
 - `deliveryContext.to`가 없음
@@ -291,11 +323,13 @@ sequenceDiagram
 2. 런타임 자원 guard
    - block 수, 직렬화 크기, 중첩 깊이
 3. 공통 식별자 guard
-   - `block_id`와 `action_id`의 타입·길이·메시지 내 중복
+   - `block_id`의 타입·길이·메시지 내 중복
+   - `action_id`의 타입·길이·중복 진단은 오류를 구체화할 뿐이며, 값의 유효성과 무관하게
+     `action_id`가 존재하면 display-only v1에서 항상 거부
 4. v1 범위 guard
    - `input` block 거부
    - `actions`, `file`, `video`, `call` block 거부
-   - `action_id`가 있는 interactive element 거부
+   - `action_id`가 있는 모든 element/object 거부
 5. JSON 안전성
    - 순환 참조나 직렬화 불가능 값 거부
 6. URL guard
@@ -341,15 +375,20 @@ raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성�
    - 전체 payload의 platform receipt가 확인된 `sent` 결과만 `nextAction`으로 정확한 `NO_REPLY`를
      요구한다.
 2. delivery safety hook
-   - `after_tool_call`에서 같은 run의 모든 tool completion을 관찰한다.
-   - 해당 run에서 관찰된 호출이 전부 `ok: true`, `status: sent`, `complete: true`인
-     `slack_send_blocks`일 때만 suppression eligible이다.
-   - 다른 도구, 검증 전용, 실패·부분 성공 호출을 하나라도 관찰하면 해당 run은 TTL 동안
-     sticky하게 ineligible이며, 나중의 성공한 Slack 호출이 다시 활성화하지 못한다.
-   - 한 실제 호출을 harness와 native relay가 서로 다른 정규화 이름으로 중복 관찰할 수 있으므로
-     exact `toolCallId`를 idempotency key로 합친다. 같은 call id에서는 확인된 complete send가
-     우선하지만, 서로 다른 call id의 실패·다른 도구는 계속 sticky하게 무효화한다.
-   - call id가 없으면 안전하게 중복 판별할 수 없으므로 기존 sticky fail-open을 유지한다.
+   - `after_tool_call`에서 같은 run의 모든 tool completion을 관찰한다. 한 observation이 complete
+     Slack send로 인정되려면 event와 context의 `toolName`이 모두 정확히 `slack_send_blocks`이고,
+     `event.error`가 없으며, result가 `ok: true`, `status: sent`, `complete: true`여야 한다.
+   - dedupe된 모든 call observation이 complete Slack send일 때만 run이 suppression eligible이다.
+   - 다른 도구, 검증 전용, 실패·부분 성공 observation은 complete Slack send가 아닌 것으로
+     판정한다.
+   - 한 실제 호출을 harness와 native relay가 여러 observation으로 중복 전달할 수 있으므로 exact
+     `toolCallId`를 idempotency key로 합친다. 같은 call id에서는 observation별 판정을 OR해 확인된
+     complete send가 우선한다. 이는 서로 다른 observation의 병합일 뿐, 위의 단일 observation
+     인정 조건을 완화하지 않는다. 서로 다른 call id는 독립적으로 모두 true여야 하므로 새 call id의
+     성공이 기존 false call id를 덮어쓰지 않는다.
+   - call id가 없으면 중복 관찰을 식별할 수 없으므로 unkeyed 관찰을 sticky AND로 병합한다.
+     unkeyed complete send 하나만 관찰되면 eligible일 수 있지만, complete send가 아닌 unkeyed 관찰이
+     하나라도 섞이면 TTL 동안 ineligible이다.
    - event/context의 call id가 충돌하면 unkeyed ineligible 관찰로 처리해 fail-open한다.
    - event와 context가 함께 제공한 `runId`가 다르거나 exact `runId`가 없으면 기록하지 않는다.
    - plugin-owned `Map`은 5분 TTL, 최대 1,024개 run, run당 최대 256개 exact call id 제한을 두며
@@ -360,10 +399,12 @@ raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성�
    - final이 여러 payload로 분할될 수 있으므로 첫 취소 뒤 marker를 소비하지 않는다.
    - error, fallback/compaction/status, reasoning/commentary, media/presentation/interactive,
      channel-specific, 빈 text, 알 수 없는 미래 payload는 모두 fail-open한다.
-   - host가 text-only final에 정규화해 붙이는 `mediaUrl: null`, undefined media/reply slot,
-     빈 `mediaUrls`, `audioAsVoice: false`는 빈/default envelope metadata로 간주한다. non-empty
-     media나 `audioAsVoice: true`는 계속 fail-open한다.
-   - marker는 TTL/용량 pruning, Gateway stop, plugin runtime reset/delete/reload cleanup에서 제거한다.
+   - `replyToId`, `replyToTag`, `replyToCurrent`는 값과 무관하게 plain-text reply metadata key로
+     허용한다. host가 text-only final에 붙이는 `mediaUrl: null`/undefined,
+     `mediaUrls: []`/undefined, `audioAsVoice: false`/undefined만 빈/default media metadata로
+     간주한다. non-empty media나 `audioAsVoice: true`는 계속 fail-open한다.
+   - marker는 TTL/용량 pruning, Gateway stop 또는 plugin runtime lifecycle cleanup callback에서
+     제거한다.
 
 두 계층의 증거 범위는 source delivery mode에 따라 다르다.
 
@@ -375,7 +416,9 @@ raw Block Kit 전송 자체가 사용자에게 보이는 최종 결과다. 성�
 
 `pnpm verify:completion`은 첫 번째 live smoke와 별개로 production에서 관찰한 relay shape를 fresh
 process에 재구성한다. 실제 global hook runner와 outbound pipeline을 사용해 hook 호출 1회, 취소
-1회, Slack adapter 호출 0회를 단언하므로 safety hook 자체의 회귀 증거다.
+1회, Slack adapter 호출 0회를 단언하므로 safety hook 자체의 회귀 증거다. 이 probe는
+`slack_send_blocks` 실행이나 실제 Slack 전송을 검증하지 않는다. synthetic complete-send result로
+`after_tool_call` handler를 채우고, plain final이 adapter tripwire 전에 취소되는 범위만 증명한다.
 
 `api.runContext`는 run 종료 시 지워지고 outer final delivery hook보다 먼저 없어질 수 있으므로 이
 상관관계 저장소에 사용하지 않는다. 이 hook은 exact run metadata가 있는 live dispatcher의
@@ -397,16 +440,33 @@ process에 재구성한다. 실제 global hook runner와 outbound pipeline을 �
 |---|---|---|
 | `validated` | 검증만 완료, 외부 전송 없음 | 없음 / 정상 응답 |
 | `sent` | 모든 payload의 플랫폼 receipt 확인 (`complete: true`) | 기록 / `NO_REPLY` |
-| `partial_suppressed` | 일부 payload는 전송되고 일부는 hook/정책으로 억제 | 없음 / 설명·복구 |
+| `partial_suppressed` | 일부 payload는 전송되고 일부는 hook 취소·빈 payload·식별 가능한 receipt 부재 등으로 suppressed | 없음 / 설명·복구 |
 | `incomplete_sent` | top-level send는 성공했지만 모든 payload의 완료를 증명하지 못함 | 없음 / 설명·복구 |
-| `suppressed` | hook/정책에 의해 의도적으로 미전송 | 없음 / 설명·복구 |
+| `suppressed` | durable 경로가 식별 가능한 visible delivery 결과를 만들지 못함(예: hook 취소, 빈 payload, `adapter_returned_no_identity`) | 없음 / 설명·복구 |
 | `partial_failed` | 일부 전송 후 후속 payload 실패 | 없음 / 설명·복구 |
 | `failed` | 플랫폼 receipt 없이 실패 | 없음 / 설명·복구 |
 
-모든 상태의 tool result 자체는 `terminate: false`다.
+모든 상태의 tool result는 JSON text `content`와 같은 객체의 `details`를 가지며
+`terminate: false`다. 결과별 주요 shape는 다음과 같다.
 
-Slack rate limit이면 `retryAfter`를 보존한다. Slack API 오류 문자열은 구조화하되 token, 전체
-payload, 내부 stack은 model-facing 결과에 포함하지 않는다.
+- `validated`: `messageCount`, `blockCounts`, `warnings`
+- 완전한 `sent`: `complete: true`, index별 `sent[]`, `warnings`, `nextAction`
+- `partial_suppressed` / `incomplete_sent`: `complete: false`, 관찰된 `sent[]`, `suppressed[]`,
+  `failed[]`; `nextAction` 없음
+- `suppressed`: top-level `reason`과 index별 `suppressed[]`
+- `partial_failed`: 성공한 `sent[]`, index별 `failed[]`, 정규화된 top-level `error`
+- `failed`: 항상 정규화된 top-level `error`; durable outcome이 있을 때만 `stage`와 index별
+  `failed[]`가 추가될 수 있음
+
+로컬 계약 오류 code는 `INVALID_ARGUMENT`, `INVALID_BLOCK_KIT`, `INVALID_ROUTE`,
+`RUNTIME_CONFIG_UNAVAILABLE`이다. durable/Slack 경계 오류는 `SLACK_RATE_LIMITED` 또는
+`SLACK_API_ERROR`로 정규화한다. rate-limit metadata에서 유효한 값을 찾은 경우에만 serialized
+결과에 `retryAfter`가 나타난다.
+
+Slack API 오류 문자열은 500자로 제한한다. `xox...`, `Bearer ...`,
+`token|secret|password=...` 형태의 흔한 token pattern은 best-effort로 redaction하며 임의의 secret을
+모두 찾는 검출기는 아니다. 전체 payload, 내부 stack과 durable hook diagnostics는 구조적으로
+model-facing 결과에 포함하지 않는다.
 
 native durable queue는 platform send 전후의 crash와 unknown-send 복구를 다룬다. 하지만 같은
 업무 요청이 새로운 tool call로 반복되는 것까지 의미론적으로 dedupe하지는 않는다. 영속
@@ -418,11 +478,12 @@ native durable queue는 platform send 전후의 crash와 unknown-send 복구를 
 - 현재 `deliveryContext` 밖으로 라우팅하지 않는다.
 - fallback `text`는 접근성과 알림을 위해 항상 필수다.
 - raw blocks와 Slack 오류 전체를 로그에 남기지 않는다.
-- validation issue는 최대 50개까지만 반환한다.
+- `error.issues`는 최대 50개까지만 반환한다. passthrough `warnings`는 이 cap 대상이 아니다.
 - tool은 Slack turn에서만 생성하며, 전역·agent·provider의 유효한 tool profile과 policy,
   sandbox tool policy가 플러그인 수준의 기본 노출보다 우선한다.
-- sandbox를 사용하는 agent에는 sandbox 수준의 허용을 요구한다. 명시적인 정책이
-  없어도 기본 sandbox allowlist는 플러그인 도구를 제외한다.
+- 정상 tool policy는 정확한 tool 이름 `slack_send_blocks`로 좁게 허용한다.
+- sandbox를 사용하는 agent에는 plugin id `slack-block-kit` 또는 `group:plugins`로 sandbox 수준의
+  허용을 요구한다. 명시적인 정책이 없어도 기본 sandbox allowlist는 plugin tool을 제외한다.
 - 플러그인은 URL-bearing field가 있을 때 비어 있지 않은 문자열인지 확인하고 `https:`를 강제한다. 허용
   도메인과 이미지 출처 정책은 producer가 책임지며, 민감한 서명 URL을 tool result에 재출력하지
   않는다.
@@ -441,44 +502,54 @@ openclaw-slack-block-kit/
 ├── src/
 │   ├── index.ts              # defineToolPlugin entry
 │   ├── tool.ts               # current-route durable tool
-│   ├── tool-copy.ts          # model-facing tool/schema 문구
+│   ├── tool-copy.ts          # model-facing tool 문구와 Slack reference URL
 │   ├── completion.ts         # exact-run final completion safety net
 │   ├── schema.ts             # TypeBox envelope
 │   ├── validator.ts          # 최소 guard validation
 │   ├── errors.ts             # 안전한 오류 정규화
-│   └── types.ts              # 내부 결과 타입
+│   └── types.ts              # 입력과 validation 타입
 ├── test/
 │   ├── metadata.test.ts      # plugin metadata/manifest 계약
 │   ├── completion.test.ts    # run correlation, fail-open, bounded cleanup
 │   ├── schema-copy.test.ts   # schema 설명 drift 방지
-│   ├── tool-copy.test.ts     # static/runtime tool 문구 drift 방지
+│   ├── tool-copy.test.ts     # model-facing 필수 selection/completion 문구 계약 고정
 │   ├── tool.test.ts          # route, durable outcome, silent-final result
 │   └── validator.test.ts     # resource/scope guard
 ├── LICENSE
-├── openclaw.plugin.json
-├── package.json
+├── openclaw.plugin.json        # generated manifest contract
+├── package.json                # build/test/validation/publish scripts
+├── pnpm-lock.yaml
 ├── README.ko.md
-└── README.md
+├── README.md
+├── tsconfig.build.json
+└── tsconfig.json
 ```
 
 ## 15. 테스트와 승인 기준
 
 ### 단위 테스트
 
+현재 기준은 6개 test file, 60개 test 모두 통과다. 아래 항목은 테스트가 보장하는 현재 계약이며,
+동작을 추가하거나 바꾸면 count와 acceptance 목록도 함께 갱신한다.
+
 - Slack 외부에서 tool factory는 `null`, Slack turn에서는 canonical tool 반환
+- runtime과 generated manifest 모두 permission-level `optional`이 없고
+  `contracts.tools: ["slack_send_blocks"]`로 일치
 - 현재 Slack `deliveryContext`의 to/account/thread 상속
-- non-Slack 및 missing-route 거부
-- messages 순서와 raw blocks 불변 전달
+- non-Slack 및 missing-route actual send 거부
+- raw blocks를 durable helper에 그대로 전달
 - `validateOnly`에서 외부 호출 없음
-- unknown block passthrough
+- section/image accessory 허용과 unknown block warning passthrough
 - 50개 초과, 크기, 깊이, duplicate id 거부
 - v1 interactive와 input block 거부
-- sent/suppressed/partial_failed/failed 결과 매핑
+- sent/incomplete_sent/suppressed/partial_suppressed/partial_failed/failed 결과 매핑
 - 모든 tool result가 `terminate: false`
 - 완전 성공한 Slack-only run에만 `NO_REPLY` next action과 exact-run completion eligibility 생성
-- 같은 run의 다른/실패/검증 tool completion은 sticky하게 suppression 무효화
-- 동일 `toolCallId`의 harness/native relay 중복 관찰은 idempotent하게 병합하고 distinct id는 분리
-- missing/mismatched run·tool call, session/channel 충돌, non-Slack, host notice,
+- event/context 모두 정확한 `slack_send_blocks`, event error 없음, complete sent result일 때만
+  observation 인정
+- 동일 `toolCallId`의 여러 observation은 idempotent OR로 병합하고, distinct call id는 각각 true,
+  unkeyed observation은 sticky AND를 요구
+- missing/mismatched run metadata, tool call id 충돌, session/channel 충돌, non-Slack, host notice,
   rich/unknown/error final은 fail-open
 - 여러 final chunk 억제, marker TTL·run/call-id 최대 개수, lifecycle cleanup
 - 빈 `payloadOutcomes`의 legacy flat-results fallback과 incomplete-send 무음 금지
@@ -493,6 +564,7 @@ pnpm test
 pnpm verify:completion
 pnpm plugin:metadata-check
 pnpm plugin:validate
+npm pack --dry-run
 ```
 
 metadata check와 validate는 generated manifest drift 및 `defineToolPlugin`
@@ -530,7 +602,8 @@ plugin module을 새 코드로 교체하지 않는다. 따라서 off/on toggle�
 3. rich_text 또는 최신 passthrough block 전송
 4. 현재 thread 안에서 thread 보존 확인
 5. 두 메시지 batch 순서 확인
-6. 잘못된 block으로 Slack API 오류 정규화 확인
+6. 로컬 guard는 통과하지만 Slack이 세부 schema로 거부하는 payload로 `SLACK_API_ERROR`
+   정규화 확인
 7. 직접 전송 뒤 중복 plain final reply가 없는지 확인하고, source delivery mode를 함께 기록
 8. 자동 전달 run이 `incomplete_turn / abandoned` 없이 끝나고 fallback 오류 메시지가 없는지 확인
 
@@ -540,9 +613,9 @@ run이 정상 완료되었다면 이는 예상 가능한 진단이며 smoke 실�
 
 실제 계정이 없는 CI에서는 adapter 경계까지 검증하고, live smoke는 release checklist로 유지한다.
 
-## 16. 단계별 계획
+## 16. 구현 상태와 후속 범위
 
-### v1 — raw message escape hatch
+### v1 — 구현됨
 
 - `defineToolPlugin`과 generated manifest
 - 기본 노출되며 Slack factory로 제한되는 `slack_send_blocks`

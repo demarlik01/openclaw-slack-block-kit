@@ -65,9 +65,8 @@ current-channel, account, and thread context and durable outbound path.
 | Current Slack channel/DM | Supported | Uses `deliveryContext.to` |
 | Current Slack thread | Supported | Inherits `deliveryContext.threadId` |
 | Sequential multi-message send | Supported | Preserves payload order |
-| section, fields, image, accessory | Supported | Subject to the Slack message surface specification |
-| rich_text, table, data_visualization, etc. | Passthrough | Workspace and Slack API support are authoritative |
-| Unknown new message block | Passthrough | Not blocked by an allowlist, to avoid version drift |
+| section, header, context, divider, image, rich_text, table, data_visualization | Known display passthrough | Common guards apply without an unknown-type warning; only section accessories are limited to images |
+| Unknown new message block | Warning-bearing passthrough | Not blocked, to avoid version drift |
 | button/static select interaction | Rejected | Add through a namespaced handler in v2 |
 | actions/input block | Rejected | Interaction-only or view-only |
 | file/video/call block | Rejected | Requires separate permissions and registration/unfurl lifecycle |
@@ -75,8 +74,12 @@ current-channel, account, and thread context and durable outbound path.
 | external select | Unsupported | Requires a separate Options Load endpoint |
 | File/video workflow | Unsupported | Requires separate permissions and API lifecycle |
 
-“Passthrough support” does not guarantee that Slack will accept the payload. The plugin forwards the
-payload without transforming it, and the Slack API acts as the final schema validator.
+The validator treats `section`, `header`, `context`, `divider`, `image`, `rich_text`, `table`, and
+`data_visualization` as one set of known display block names. Membership changes only whether an
+unknown-type warning is emitted. The eight known types and warning-bearing unknown types receive the
+same common structure, size, URL, and interaction guards, while their detailed schemas remain
+passthrough. The only type-specific local rule is that a section accessory must be an image. Every
+allowed block is forwarded as a raw payload, and the Slack API is the final schema validator.
 
 ## 4. Core Components and Responsibilities
 
@@ -143,8 +146,11 @@ this plugin that protect the runtime from model-generated payloads.
   ],
   "nextAction": {
     "type": "silent_final",
-    "token": "NO_REPLY"
+    "token": "NO_REPLY",
+    "instruction": "The Block Kit message is already visible. Return exactly NO_REPLY with no other text."
   },
+  "suppressed": [],
+  "failed": [],
   "warnings": []
 }
 ```
@@ -162,16 +168,23 @@ this plugin that protect the runtime from model-generated payloads.
       "channelId": "C12345678"
     }
   ],
+  "suppressed": [],
   "failed": [
     {
       "index": 1,
       "stage": "platform_send",
+      "sentBeforeError": true,
       "error": {
         "code": "SLACK_API_ERROR",
         "message": "invalid_blocks"
       }
     }
-  ]
+  ],
+  "error": {
+    "code": "SLACK_API_ERROR",
+    "message": "invalid_blocks"
+  },
+  "warnings": []
 }
 ```
 
@@ -204,24 +217,41 @@ plugin.register
 - `contracts.tools: ["slack_send_blocks"]`
 - `configSchema`
 
-Permission-level `optional` metadata is intentionally omitted. Installing and enabling this
-single-purpose plugin is the normal opt-in, while the factory still returns `null` outside Slack
-turns. This affects plugin-level default exposure only: an effective global, agent, or provider
-`tools.profile`, an explicit allow or deny policy, and a sandbox tool policy still take precedence.
-Profiles other than `full` do not include third-party plugin tools by default, so users must add
-`slack_send_blocks` with `alsoAllow` (or to an existing `allow` array at that scope).
-Sandboxed agents need the same sandbox-layer grant because OpenClaw's default sandbox allowlist
-also excludes plugin tools when no explicit sandbox tool policy is configured.
+Permission-level `optional` metadata and `toolMetadata` are intentionally omitted. Installing and
+enabling this single-purpose plugin is the normal opt-in, while the factory still returns `null`
+outside Slack turns. The factory resolves the surface as
+`deliveryContext.channel ?? messageChannel`; actual delivery must still pass the stricter
+current-route check below.
+
+This decision means required/default-visible only at the plugin-registration layer. It does not
+bypass OpenClaw host policy. Effective global, agent, and provider `tools.profile` and allow/deny
+rules, plus sandbox tool policy, still take precedence.
+
+- Normal tool policy: the value to add to a restricted profile or allowlist is the exact tool name
+  `slack_send_blocks`. A scope cannot contain both `allow` and `alsoAllow`; add it to an existing
+  `allow`, or use `alsoAllow` on top of a profile.
+- Local onboarding: when a new local config has no value, onboarding sets
+  `tools.profile: "coding"` and preserves an existing explicit profile. `coding`, `messaging`, and
+  `minimal` do not include this third-party native plugin tool by default. `full` and an unset
+  profile do not themselves restrict tools.
+- Additional sandbox gate: a sandboxed turn needs a second grant after normal policy. Use the native
+  plugin id `slack-block-kit` to grant only this plugin, or `group:plugins` only when every plugin
+  tool should be granted, in `tools.sandbox.tools.alsoAllow` or the existing sandbox `allow`.
+  The default sandbox allowlist contains no plugin tools even when no sandbox policy is configured.
 
 Whenever the tool name or schema changes, rerun both the generator and
-`openclaw plugins validate`. The plugin must not load when runtime registration and manifest
-ownership disagree.
+`openclaw plugins validate`. If runtime registration disagrees with `contracts.tools` ownership,
+that tool registration is skipped and a diagnostic is emitted. `plugin:metadata-check` and
+`plugin:validate` must treat this drift as a release failure.
 
 ## 7. Current-route Resolution
 
-Trust only the `OpenClawPluginToolContext.deliveryContext` received by the tool factory. Here,
-“current route” means the exact Slack channel or DM that invoked the tool, and the thread in which
-the invocation began.
+Trust only the `OpenClawPluginToolContext.deliveryContext` received by the tool factory as the
+delivery destination. Here, “current route” means the exact Slack channel or DM that invoked the
+tool, and the thread in which the invocation began. `messageChannel` is only a fallback for deciding
+whether to create the factory tool; it is not a substitute delivery route.
+
+The actual delivery route is:
 
 ```text
 channel  = deliveryContext.channel  // must be "slack"
@@ -230,7 +260,9 @@ account  = deliveryContext.accountId ?? agentAccountId
 thread   = deliveryContext.threadId
 ```
 
-In the following cases, either do not expose the tool or return a structured error.
+`validateOnly: true` is the exception. After input and block validation, it returns `validated`
+before the route and runtime-config gates and does not call the durable sender. For an actual send,
+either do not expose the tool or return a structured error in the following cases.
 
 - The current surface is not Slack
 - `deliveryContext.to` is missing
@@ -298,11 +330,13 @@ This path reuses the following facilities.
 2. Runtime resource guards
    - Block count, serialized size, and nesting depth
 3. Shared identifier guards
-   - Type, length, and per-message uniqueness of `block_id` and `action_id`
+   - Type, length, and per-message uniqueness of `block_id`
+   - Type, length, and uniqueness checks for `action_id` only improve diagnostics; the presence of
+     any `action_id` is always rejected in display-only v1 regardless of its validity
 4. v1 scope guards
    - Reject `input` blocks
    - Reject `actions`, `file`, `video`, and `call` blocks
-   - Reject interactive elements containing `action_id`
+   - Reject every element/object containing `action_id`
 5. JSON safety
    - Reject circular references or values that cannot be serialized
 6. URL guards
@@ -349,18 +383,22 @@ duplicate ordinary response through two layers.
    - Only a `sent` result with platform receipts confirmed for every payload requires the exact
      `NO_REPLY` through `nextAction`.
 2. Delivery safety hook
-   - `after_tool_call` observes every tool completion in the same run.
-   - A run is eligible for suppression only when every observed call in that run is a
-     `slack_send_blocks` call with `ok: true`, `status: sent`, and `complete: true`.
-   - If any other tool, validation-only call, failed call, or partially successful call is observed,
-     the run becomes sticky-ineligible for its TTL; a later successful Slack call cannot reactivate
-     it.
-   - Because the harness and native relay may observe a single physical call twice under different
-     normalized names, observations are merged idempotently using the exact `toolCallId` as the key.
-     A confirmed complete send wins within the same call ID, but failures and other tools with
-     distinct call IDs remain sticky invalidators.
-   - Without a call ID, duplicates cannot be identified safely, so the existing sticky fail-open
-     behavior is preserved.
+   - `after_tool_call` observes every tool completion in the same run. An observation counts as a
+     complete Slack send only when both the event and context `toolName` equal exactly
+     `slack_send_blocks`, `event.error` is absent, and the result has `ok: true`, `status: sent`, and
+     `complete: true`.
+   - A run is eligible for suppression only when every deduplicated call observation is a complete
+     Slack send.
+   - Other-tool, validation-only, failed, and partially successful observations do not count as
+     complete Slack sends.
+   - Because the harness and native relay may emit multiple observations of one physical call, the
+     exact `toolCallId` is the idempotency key. Per-observation decisions are OR-merged within the
+     same call ID, so a confirmed complete send wins. This merges distinct observations and does not
+     relax the single-observation conditions above. Distinct call IDs must each be true, so success
+     under a new call ID does not overwrite an existing false call ID.
+   - Without a call ID, duplicate observations cannot be identified, so unkeyed observations are
+     merged with sticky AND semantics. A sole unkeyed complete send can remain eligible, but any
+     unkeyed observation that is not a complete send makes the run ineligible for its TTL.
    - Conflicting event/context call IDs are treated as an unkeyed ineligible observation and fail
      open.
    - If the event and context both provide different `runId` values, or no exact `runId` exists, the
@@ -375,11 +413,12 @@ duplicate ordinary response through two layers.
      cancellation.
    - Error, fallback/compaction/status, reasoning/commentary, media/presentation/interactive,
      channel-specific, empty-text, and unknown future payloads all fail open.
-   - Host-normalized `mediaUrl: null`, undefined media/reply slots, empty `mediaUrls`, and
-     `audioAsVoice: false` attached to a text-only final are treated as empty/default envelope
-     metadata. Non-empty media and `audioAsVoice: true` continue to fail open.
-   - Markers are cleared by TTL/capacity pruning and on Gateway stop and plugin runtime
-     reset/delete/reload cleanup.
+   - `replyToId`, `replyToTag`, and `replyToCurrent` are allowed as plain-text reply metadata keys
+     regardless of value. Only host-normalized `mediaUrl: null`/undefined,
+     `mediaUrls: []`/undefined, and `audioAsVoice: false`/undefined are treated as empty/default
+     media metadata. Non-empty media and `audioAsVoice: true` continue to fail open.
+   - Markers are cleared by TTL/capacity pruning, Gateway stop, or the plugin runtime lifecycle
+     cleanup callback.
 
 The evidentiary boundary of these two layers depends on the source delivery mode.
 
@@ -392,7 +431,10 @@ The evidentiary boundary of these two layers depends on the source delivery mode
 Separately from the first live smoke test, `pnpm verify:completion` reconstructs the relay shape
 observed in production inside a fresh process. It uses the real global hook runner and outbound
 pipeline and asserts one hook invocation, one cancellation, and zero Slack adapter calls. It is
-therefore regression evidence for the safety hook itself.
+therefore regression evidence for the safety hook itself. The probe does not execute
+`slack_send_blocks` or perform a real Slack send. It seeds the registered `after_tool_call` handler
+with a synthetic complete-send result and proves only that a plain final is cancelled before the
+adapter tripwire.
 
 `api.runContext` is cleared when the run ends and may disappear before the outer final delivery
 hook, so it is not used as the correlation store. This hook is only a last-resort safety net for the
@@ -416,16 +458,34 @@ The tool distinguishes the following states.
 |---|---|---|
 | `validated` | Validation completed; no external send | None / normal response |
 | `sent` | Platform receipts confirmed for every payload (`complete: true`) | Recorded / `NO_REPLY` |
-| `partial_suppressed` | Some payloads sent and others suppressed by hooks/policy | None / explain and recover |
+| `partial_suppressed` | Some payloads sent and others suppressed by hook cancellation, empty payloads, or a missing identifiable receipt | None / explain and recover |
 | `incomplete_sent` | Top-level send succeeded, but completion of every payload could not be proven | None / explain and recover |
-| `suppressed` | Intentionally not sent because of a hook/policy | None / explain and recover |
+| `suppressed` | Durable delivery produced no identifiable visible-delivery result (for example hook cancellation, an empty payload, or `adapter_returned_no_identity`) | None / explain and recover |
 | `partial_failed` | A later payload failed after some payloads were sent | None / explain and recover |
 | `failed` | Failed without a platform receipt | None / explain and recover |
 
-The tool result itself has `terminate: false` in every state.
+In every state, the tool result contains JSON text in `content`, the same object in `details`, and
+`terminate: false`. The principal result shapes are:
 
-For Slack rate limits, preserve `retryAfter`. Slack API error strings are structured, but tokens,
-complete payloads, and internal stacks are not included in model-facing results.
+- `validated`: `messageCount`, `blockCounts`, and `warnings`
+- complete `sent`: `complete: true`, index-addressed `sent[]`, `warnings`, and `nextAction`
+- `partial_suppressed` / `incomplete_sent`: `complete: false`, observed `sent[]`, `suppressed[]`, and
+  `failed[]`; no `nextAction`
+- `suppressed`: a top-level `reason` and index-addressed `suppressed[]`
+- `partial_failed`: successful `sent[]`, index-addressed `failed[]`, and a normalized top-level
+  `error`
+- `failed`: always a normalized top-level `error`; a durable outcome may additionally provide
+  `stage` and index-addressed `failed[]`
+
+Local contract error codes are `INVALID_ARGUMENT`, `INVALID_BLOCK_KIT`, `INVALID_ROUTE`, and
+`RUNTIME_CONFIG_UNAVAILABLE`. Errors at the durable/Slack boundary normalize to
+`SLACK_RATE_LIMITED` or `SLACK_API_ERROR`. Serialized results include `retryAfter` only when a valid
+value is present in rate-limit metadata.
+
+Slack API error strings are limited to 500 characters. Common token patterns of the forms `xox...`,
+`Bearer ...`, and `token|secret|password=...` are redacted on a best-effort basis; this is not an
+arbitrary-secret detector. Complete payloads, internal stacks, and durable hook diagnostics are
+structurally excluded from model-facing results.
 
 The native durable queue handles crashes before and after a platform send and unknown-send
 recovery. It does not semantically deduplicate the same business request repeated as a new tool
@@ -438,11 +498,12 @@ real producer requirement emerges.
 - Do not route outside the current `deliveryContext`.
 - Always require fallback `text` for accessibility and notifications.
 - Do not log complete raw blocks or complete Slack errors.
-- Return no more than 50 validation issues.
+- Return at most 50 entries in `error.issues`; passthrough `warnings` are not subject to this cap.
 - Create the tool only for Slack turns; effective global, agent, and provider tool profiles and
   policies, plus sandbox tool policy, still take precedence over plugin-level default exposure.
-- Require a sandbox-layer grant for sandboxed agents; the default sandbox allowlist excludes plugin
-  tools even without an explicit sandbox tool policy.
+- In normal tool policy, narrowly grant the exact tool name `slack_send_blocks`.
+- Require a sandbox-layer grant by plugin id `slack-block-kit` or `group:plugins` for sandboxed
+  agents; the default sandbox allowlist excludes plugin tools even without an explicit policy.
 - For URL-bearing fields, the plugin verifies a non-empty string and enforces `https:`. The producer
   is responsible for allowed-domain and image-source policy, and sensitive signed URLs are not
   echoed back in the tool result.
@@ -461,48 +522,56 @@ openclaw-slack-block-kit/
 ├── src/
 │   ├── index.ts              # defineToolPlugin entry
 │   ├── tool.ts               # current-route durable tool
-│   ├── tool-copy.ts          # model-facing tool/schema copy
+│   ├── tool-copy.ts          # model-facing tool copy and Slack reference URL
 │   ├── completion.ts         # exact-run final completion safety net
 │   ├── schema.ts             # TypeBox envelope
 │   ├── validator.ts          # minimum guard validation
 │   ├── errors.ts             # safe error normalization
-│   └── types.ts              # internal result types
+│   └── types.ts              # input and validation types
 ├── test/
 │   ├── metadata.test.ts      # plugin metadata/manifest contract
 │   ├── completion.test.ts    # run correlation, fail-open, bounded cleanup
 │   ├── schema-copy.test.ts   # prevent schema-description drift
-│   ├── tool-copy.test.ts     # prevent static/runtime tool-copy drift
+│   ├── tool-copy.test.ts     # pin required model-facing selection/completion copy
 │   ├── tool.test.ts          # route, durable outcome, silent-final result
 │   └── validator.test.ts     # resource/scope guards
 ├── LICENSE
-├── openclaw.plugin.json
-├── package.json
+├── openclaw.plugin.json        # generated manifest contract
+├── package.json                # build/test/validation/publish scripts
+├── pnpm-lock.yaml
 ├── README.ko.md
-└── README.md
+├── README.md
+├── tsconfig.build.json
+└── tsconfig.json
 ```
 
 ## 15. Tests and Acceptance Criteria
 
 ### Unit Tests
 
+The current baseline is 60 passing tests across six test files. The list below is the contract those
+tests currently cover; when behavior changes, update both the count and the acceptance list.
+
 - Return `null` from the tool factory outside Slack and the canonical tool on Slack turns
+- Keep permission-level `optional` absent from runtime and generated manifest metadata, with
+  `contracts.tools: ["slack_send_blocks"]` aligned
 - Inherit to/account/thread from the current Slack `deliveryContext`
-- Reject non-Slack and missing-route contexts
-- Preserve message order and pass raw blocks unchanged
+- Reject non-Slack and missing-route actual sends
+- Pass raw blocks unchanged to the durable helper
 - Make no external call during `validateOnly`
-- Pass through unknown blocks
+- Accept a section/image accessory and pass through an unknown block with a warning
 - Reject more than 50 blocks, oversize payloads, excessive depth, and duplicate IDs
 - Reject v1 interactions and input blocks
-- Map sent/suppressed/partial_failed/failed results
+- Map sent/incomplete_sent/suppressed/partial_suppressed/partial_failed/failed results
 - Return `terminate: false` for every tool result
 - Create a `NO_REPLY` next action and exact-run completion eligibility only for fully successful
   Slack-only runs
-- Sticky-invalidate suppression when the same run contains another, failed, or validation-only tool
-  completion
-- Merge duplicate harness/native-relay observations with the same `toolCallId` idempotently while
-  keeping distinct IDs separate
-- Fail open for missing/mismatched run or tool-call metadata, session/channel conflicts, non-Slack,
-  host notices, and rich/unknown/error finals
+- Accept an observation only when event/context both name exactly `slack_send_blocks`, no event
+  error is present, and the result is a complete send
+- OR-merge multiple observations with the same `toolCallId` idempotently; require each distinct call
+  ID to be true and combine unkeyed observations with sticky AND
+- Fail open for missing/mismatched run metadata, conflicting tool-call IDs, session/channel
+  conflicts, non-Slack, host notices, and rich/unknown/error finals
 - Suppress multiple final chunks; enforce marker TTL, maximum run/call-ID counts, and lifecycle
   cleanup
 - Treat an empty `payloadOutcomes` array as the legacy flat-results shape, and never leave an
@@ -518,6 +587,7 @@ pnpm test
 pnpm verify:completion
 pnpm plugin:metadata-check
 pnpm plugin:validate
+npm pack --dry-run
 ```
 
 The metadata check and validation must detect generated manifest drift and verify that
@@ -561,7 +631,8 @@ toggle as evidence of code reload.
 3. Send rich_text or a recent passthrough block.
 4. Confirm thread preservation inside the current thread.
 5. Confirm the order of a two-message batch.
-6. Use an invalid block to confirm Slack API error normalization.
+6. Use a payload that passes local guards but Slack rejects semantically to confirm
+   `SLACK_API_ERROR` normalization.
 7. Confirm that no duplicate plain final reply appears after a direct send, and record the source
    delivery mode with the result.
 8. Confirm that an automatically delivered run finishes without `incomplete_turn / abandoned` and
@@ -574,9 +645,9 @@ fallback/error message was sent to the user and the run completed normally.
 When CI has no real account, verify through the adapter boundary and retain the live smoke test as a
 release-checklist item.
 
-## 16. Phased Plan
+## 16. Implementation Status and Follow-up Scope
 
-### v1 — raw message escape hatch
+### v1 — implemented
 
 - `defineToolPlugin` and generated manifest
 - Default-visible, Slack-factory-gated `slack_send_blocks`

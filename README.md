@@ -71,11 +71,12 @@ notifications and accessibility.
 
 - Comparisons, ranked results, status summaries, multi-field records, tables, image
   cards, grouped sections, and data visualizations
-- Locally recognized display blocks with safety validation: `section` (including
-  `fields` and an image accessory), `header`, `context`, `divider`, and `image`
-- Raw passthrough for `rich_text`, `table`, `data_visualization`, and unknown
-  message-surface blocks; common structure, size, URL, and safety checks run locally,
+- Known display blocks: `section` (including `fields` and an image accessory),
+  `header`, `context`, `divider`, `image`, `rich_text`, `table`, and
+  `data_visualization`; common structure, size, URL, and safety checks run locally,
   while Slack validates their detailed schema
+- Warning-bearing passthrough for unknown message-surface blocks, with the same
+  common local checks
 - 1–10 messages per call, in order; 1–50 blocks per message
 - Required fallback text of 1–4,000 characters per message
 - OpenClaw's existing Slack authentication, outbound queue, hooks, and delivery receipts

@@ -68,11 +68,11 @@ slack_send_blocks를 사용해서 아래 후보들을 이미지 카드로 현재
 ## 지원 범위
 
 - 비교, 순위, 상태 요약, 여러 필드로 된 레코드, 표, 이미지 카드, 그룹 섹션, 데이터 시각화
-- 로컬에서 인식하고 안전 검증하는 표시용 block: `section`(`fields`와 image accessory
-  포함), `header`, `context`, `divider`, `image`
-- Raw passthrough: `rich_text`, `table`, `data_visualization`, 알 수 없는
-  message-surface block. 공통 구조·크기·URL·안전 검사는 로컬에서 수행하고 세부 schema는
-  Slack이 검증합니다.
+- 알려진 표시용 block: `section`(`fields`와 image accessory 포함), `header`, `context`,
+  `divider`, `image`, `rich_text`, `table`, `data_visualization`. 공통 구조·크기·URL·안전
+  검사는 로컬에서 수행하고 세부 schema는 Slack이 검증합니다.
+- 알 수 없는 message-surface block은 같은 공통 로컬 검사를 거친 뒤 경고와 함께
+  passthrough합니다.
 - 호출당 메시지 1~10개를 입력 순서대로 전송, 메시지당 block 1~50개
 - 메시지당 1~4,000자의 필수 fallback text
 - OpenClaw의 기존 Slack 인증, outbound queue, hooks, delivery receipt 재사용
