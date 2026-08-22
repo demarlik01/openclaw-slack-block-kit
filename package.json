@@ -1,18 +1,40 @@
 {
   "name": "openclaw-slack-block-kit",
   "version": "0.1.0",
-  "private": true,
-  "description": "Send current-route Slack message-surface Block Kit through OpenClaw",
+  "description": "Send rich Slack Block Kit messages to the current Slack conversation",
+  "license": "MIT",
+  "author": "demarlik01",
+  "homepage": "https://github.com/demarlik01/openclaw-slack-block-kit#readme",
+  "bugs": {
+    "url": "https://github.com/demarlik01/openclaw-slack-block-kit/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/demarlik01/openclaw-slack-block-kit.git"
+  },
+  "keywords": [
+    "openclaw",
+    "slack",
+    "block-kit",
+    "plugin",
+    "agent-tools"
+  ],
   "type": "module",
   "files": [
     "dist",
     "docs",
     "openclaw.plugin.json",
-    "README.md"
+    "README.md",
+    "README.ko.md",
+    "LICENSE"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "prepare": "tsc -p tsconfig.build.json",
+    "prepare": "pnpm build && pnpm package:normalize",
+    "package:normalize": "node ./scripts/normalize-package-modes.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "preplugin:build": "pnpm build",
@@ -39,6 +61,18 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "install": {
+      "clawhubSpec": "clawhub:openclaw-slack-block-kit",
+      "npmSpec": "openclaw-slack-block-kit",
+      "defaultChoice": "clawhub",
+      "minHostVersion": ">=2026.7.1-2"
+    },
+    "compat": {
+      "pluginApi": ">=2026.7.1-2"
+    },
+    "build": {
+      "openclawVersion": "2026.7.1-2"
+    }
   }
 }

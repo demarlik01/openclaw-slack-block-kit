@@ -11,7 +11,7 @@ import { createSlackSendBlocksTool } from "./tool.js";
 const plugin = defineToolPlugin({
   id: "slack-block-kit",
   name: "Slack Block Kit",
-  description: "Send current-route Slack message-surface Block Kit through OpenClaw",
+  description: "Send rich Slack Block Kit messages to the current Slack conversation",
   tools: (tool) => [
     tool({
       name: SLACK_SEND_BLOCKS_NAME,

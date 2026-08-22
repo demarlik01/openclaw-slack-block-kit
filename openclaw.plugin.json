@@ -1,7 +1,7 @@
 {
   "id": "slack-block-kit",
   "name": "Slack Block Kit",
-  "description": "Send current-route Slack message-surface Block Kit through OpenClaw",
+  "description": "Send rich Slack Block Kit messages to the current Slack conversation",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",

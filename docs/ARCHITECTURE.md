@@ -423,11 +423,14 @@ openclaw-slack-block-kit/
 ├── docs/
 │   ├── ARCHITECTURE.md       # 기준 규범적 설계
 │   ├── ARCHITECTURE.en.md    # 영문 규범적 번역본
+│   └── images/               # README Before/After 스크린샷
 ├── scripts/
+│   ├── normalize-package-modes.mjs    # npm tarball 파일 권한 정규화
 │   └── verify-completion-pipeline.mjs # fresh-process completion probe
 ├── src/
 │   ├── index.ts              # defineToolPlugin entry
 │   ├── tool.ts               # current-route durable tool
+│   ├── tool-copy.ts          # model-facing tool/schema 문구
 │   ├── completion.ts         # exact-run final completion safety net
 │   ├── schema.ts             # TypeBox envelope
 │   ├── validator.ts          # 최소 guard validation
@@ -436,10 +439,14 @@ openclaw-slack-block-kit/
 ├── test/
 │   ├── metadata.test.ts      # plugin metadata/manifest 계약
 │   ├── completion.test.ts    # run correlation, fail-open, bounded cleanup
+│   ├── schema-copy.test.ts   # schema 설명 drift 방지
+│   ├── tool-copy.test.ts     # static/runtime tool 문구 drift 방지
 │   ├── tool.test.ts          # route, durable outcome, silent-final result
 │   └── validator.test.ts     # resource/scope guard
+├── LICENSE
 ├── openclaw.plugin.json
 ├── package.json
+├── README.ko.md
 └── README.md
 ```
 

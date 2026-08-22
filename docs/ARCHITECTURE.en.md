@@ -443,11 +443,14 @@ openclaw-slack-block-kit/
 ├── docs/
 │   ├── ARCHITECTURE.md       # canonical normative design
 │   ├── ARCHITECTURE.en.md    # maintained normative English translation
+│   └── images/               # README Before/After screenshots
 ├── scripts/
+│   ├── normalize-package-modes.mjs    # normalize npm tarball file modes
 │   └── verify-completion-pipeline.mjs # fresh-process completion probe
 ├── src/
 │   ├── index.ts              # defineToolPlugin entry
 │   ├── tool.ts               # current-route durable tool
+│   ├── tool-copy.ts          # model-facing tool/schema copy
 │   ├── completion.ts         # exact-run final completion safety net
 │   ├── schema.ts             # TypeBox envelope
 │   ├── validator.ts          # minimum guard validation
@@ -456,10 +459,14 @@ openclaw-slack-block-kit/
 ├── test/
 │   ├── metadata.test.ts      # plugin metadata/manifest contract
 │   ├── completion.test.ts    # run correlation, fail-open, bounded cleanup
+│   ├── schema-copy.test.ts   # prevent schema-description drift
+│   ├── tool-copy.test.ts     # prevent static/runtime tool-copy drift
 │   ├── tool.test.ts          # route, durable outcome, silent-final result
 │   └── validator.test.ts     # resource/scope guards
+├── LICENSE
 ├── openclaw.plugin.json
 ├── package.json
+├── README.ko.md
 └── README.md
 ```
 
