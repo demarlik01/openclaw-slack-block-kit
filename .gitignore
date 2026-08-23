@@ -5,3 +5,25 @@ reports/
 *.log
 *.tgz
 .DS_Store
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+.envrc
+.npmrc
+.openclaw/
+openclaw.json
+config.json
+credentials*.json
+service-account*.json
+secrets*.json
+secrets/
+.secrets/
+*.key
+*.pem
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
