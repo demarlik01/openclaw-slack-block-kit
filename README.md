@@ -38,11 +38,9 @@ Or install directly from npm:
 openclaw plugins install npm:openclaw-slack-block-kit
 ```
 
-No separate Slack credential or destination configuration is needed. If you request a
-Block Kit message from Slack and `slack_send_blocks` still does not appear, enable it in
-**Control UI → Agents → select your agent → Tools**, then select **Save**. New local
-OpenClaw onboarding commonly sets the `coding` tool profile, which excludes third-party
-plugin tools. See [Troubleshooting](#the-tool-does-not-appear) for CLI and policy details.
+After installation, no plugin-specific Slack credentials, destination, or other
+configuration is required. The plugin reuses OpenClaw's existing Slack connection and
+the current conversation route.
 
 ## Use it from Slack
 
@@ -92,25 +90,40 @@ For a portable layout across channels, use OpenClaw's core `message` tool with
 
 ### The tool does not appear
 
+Plugin installation registers the tool automatically. The steps below grant access only
+when the active tool policy or runtime hides it.
+
 1. Start the request from Slack. The tool is intentionally hidden on other surfaces.
-2. In **Control UI → Agents → select your agent → Tools**, enable
-   `slack_send_blocks`, then select **Save**.
-3. Inspect the loaded runtime:
+2. Plugin installs and updates require the Gateway to reload. A managed Gateway normally
+   restarts automatically; otherwise run `openclaw gateway restart` once.
+3. Inspect the loaded runtime and confirm that the Gateway RPC is healthy:
 
    ```bash
    openclaw plugins inspect slack-block-kit --runtime --json
-   openclaw gateway status
+   openclaw gateway status --deep --require-rpc
    ```
 
-4. If the plugin is disabled, run `openclaw plugins enable slack-block-kit`. If the old
-   runtime is still loaded, run `openclaw gateway restart` once.
-5. If `plugins.allow` is configured, make sure it includes `slack-block-kit`.
+4. If the plugin reports `loaded` but the tool is missing, run `openclaw dashboard`, then
+   open **OpenClaw Dashboard → Agents → select your agent → Tools**, enable
+   `slack_send_blocks`, and select **Save**. This is commonly needed when local
+   onboarding selected the `coding` tool profile, which excludes third-party plugin
+   tools.
+5. If the plugin is disabled, run `openclaw plugins enable slack-block-kit`.
+6. If `plugins.allow` is configured, make sure it includes `slack-block-kit`. This is a
+   plugin-loading gate, separate from the agent's tool policy.
 
 <details>
 <summary>Advanced tool policy setup</summary>
 
 Profiles such as `coding`, `messaging`, and `minimal` exclude third-party plugin tools.
-Grant the tool in the affected global or agent scope:
+The Dashboard toggle normally writes `agents.list[].tools.alsoAllow` for the selected
+agent. If the Dashboard reports that the agent uses an explicit allowlist, update that
+agent's `tools.allow` in the Dashboard **Config** tab instead.
+
+To grant the tool globally, edit the active OpenClaw configuration file—normally
+`~/.openclaw/openclaw.json`. A CLI `--profile <name>` (state isolation, unrelated to tool
+profiles) or `OPENCLAW_CONFIG_PATH` can change this location; run `openclaw config file`
+to print the active path. Add the following top-level `tools` entry to that file:
 
 ```json5
 {
@@ -120,12 +133,15 @@ Grant the tool in the affected global or agent scope:
 }
 ```
 
-If that scope already has `tools.allow`, add the tool to that array instead. Sandboxed
-agents also need the plugin id `slack-block-kit` in `tools.sandbox.tools.alsoAllow` (or
-the existing sandbox `allow` array), even when no sandbox tool policy is configured.
-Use `group:plugins` instead only to allow every plugin tool. For read-only Control UI
-panels or agent/provider-specific policies, see [OpenClaw tool profiles and
-policies](https://docs.openclaw.ai/gateway/config-tools).
+To limit the grant to one agent, put the same `alsoAllow` entry under that agent's
+`agents.list[].tools` instead. If the chosen scope already has `tools.allow`, add the
+tool to that array; `allow` and `alsoAllow` cannot coexist in one scope.
+
+Sandbox tool policy is a separate gate. Sandboxed agents also need the plugin id
+`slack-block-kit` in `tools.sandbox.tools.alsoAllow` (or the existing sandbox `allow`
+array). Use `group:plugins` instead only to allow every plugin tool. For agent-,
+provider-, or sandbox-specific policies, see
+[OpenClaw tool profiles and policies](https://docs.openclaw.ai/gateway/config-tools).
 
 </details>
 

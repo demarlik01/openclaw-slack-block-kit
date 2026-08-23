@@ -37,11 +37,8 @@ openclaw plugins install clawhub:openclaw-slack-block-kit
 openclaw plugins install npm:openclaw-slack-block-kit
 ```
 
-별도 Slack 자격 증명이나 목적지 설정은 필요 없습니다. Slack 대화에서 Block Kit 메시지를
-요청했는데도 `slack_send_blocks`가 보이지 않으면 Control UI의 **에이전트(Agents) → 사용할
-에이전트 → 도구(Tools)** 메뉴에서 활성화하고 **저장(Save)** 버튼을 누르세요. 새 로컬 OpenClaw
-onboarding은 흔히 제3자 플러그인 도구를 제외하는 `coding` tool profile을 설정합니다.
-CLI와 정책 관련 내용은 [문제 해결](#도구가-보이지-않음)을 참고하세요.
+설치 후 플러그인 전용 Slack 자격 증명·목적지·추가 설정은 필요 없습니다. OpenClaw에 이미
+설정된 Slack 연결과 현재 대화 경로를 재사용합니다.
 
 ## Slack에서 사용하기
 
@@ -87,25 +84,40 @@ App Home, `file`/`video`/`call` lifecycle은 지원하지 않습니다.
 
 ### 도구가 보이지 않음
 
+플러그인을 설치하면 도구는 자동으로 등록됩니다. 아래 단계는 활성 도구 정책이나 runtime이
+도구를 숨기는 경우에만 접근을 허용하는 절차입니다.
+
 1. Slack에서 요청을 시작하세요. 다른 surface에서는 도구가 의도적으로 숨겨집니다.
-2. Control UI의 **에이전트(Agents) → 사용할 에이전트 → 도구(Tools)** 메뉴에서
-   `slack_send_blocks`를 활성화하고 **저장(Save)** 버튼을 누르세요.
-3. 로드된 runtime을 확인하세요.
+2. 플러그인을 설치하거나 업데이트하면 Gateway를 다시 로드해야 합니다. 관리형 Gateway는
+   보통 자동으로 재시작되며, 그렇지 않다면 `openclaw gateway restart`를 한 번 실행하세요.
+3. 로드된 runtime과 Gateway RPC 상태를 확인하세요.
 
    ```bash
    openclaw plugins inspect slack-block-kit --runtime --json
-   openclaw gateway status
+   openclaw gateway status --deep --require-rpc
    ```
 
-4. 플러그인이 disabled라면 `openclaw plugins enable slack-block-kit`을 실행하세요. 이전
-   runtime이 계속 로드되어 있다면 `openclaw gateway restart`를 한 번 실행하세요.
-5. `plugins.allow`를 사용한다면 `slack-block-kit`이 포함되어 있는지 확인하세요.
+4. 플러그인이 `loaded`로 표시되지만 도구가 없다면 `openclaw dashboard`를 실행한 뒤,
+   **OpenClaw Dashboard → 에이전트(Agents) → 사용할 에이전트 → 도구(Tools)**에서
+   `slack_send_blocks`를 활성화하고 **저장(Save)**을 누르세요. 새 로컬 onboarding에서 흔히
+   선택되는 `coding` tool profile은 제3자 플러그인 도구를 제외하므로 이 단계가 필요할 수
+   있습니다.
+5. 플러그인이 disabled라면 `openclaw plugins enable slack-block-kit`을 실행하세요.
+6. `plugins.allow`를 사용한다면 `slack-block-kit`이 포함되어 있는지 확인하세요. 이는 agent
+   tool policy와 별개인 plugin loading gate입니다.
 
 <details>
 <summary>고급 도구 정책 설정</summary>
 
-`coding`, `messaging`, `minimal` 같은 profile은 제3자 플러그인 도구를 제외합니다. 영향을
-받는 전역 또는 agent scope에서 도구를 허용하세요.
+`coding`, `messaging`, `minimal` 같은 profile은 제3자 플러그인 도구를 제외합니다. Dashboard
+toggle은 보통 선택한 agent의 `agents.list[].tools.alsoAllow`에 override를 기록합니다.
+Dashboard에 agent가 명시적 allowlist를 사용한다는 안내가 나오면 **Config** tab에서 해당
+agent의 `tools.allow`를 수정하세요.
+
+전역에서 허용하려면 활성 OpenClaw 설정 파일을 수정하세요. 기본 경로는
+`~/.openclaw/openclaw.json`입니다. CLI `--profile <name>`(tool profile과 무관한 상태 격리
+옵션)이나 `OPENCLAW_CONFIG_PATH`에 따라 달라질 수 있으므로 `openclaw config file`로 실제
+활성 경로를 확인하세요. 해당 파일의 최상위에 다음 `tools` 항목을 추가하세요.
 
 ```json5
 {
@@ -115,11 +127,14 @@ App Home, `file`/`video`/`call` lifecycle은 지원하지 않습니다.
 }
 ```
 
-같은 scope에 이미 `tools.allow`가 있다면 그 배열에 도구를 추가하세요. sandbox를 사용하는
-agent는 명시적인 sandbox tool policy가 없어도 plugin id `slack-block-kit`을
-`tools.sandbox.tools.alsoAllow` 또는 기존 sandbox `allow` 배열에서 별도로 허용해야 합니다.
-모든 plugin tool을 허용할 때만 `group:plugins`를 사용하세요. Control UI가 read-only이거나
-agent·provider별 policy를 사용한다면 [OpenClaw tool profile과
+한 agent에만 허용하려면 같은 `alsoAllow` 항목을 해당 agent의 `agents.list[].tools` 아래에
+추가하세요. 선택한 scope에 이미 `tools.allow`가 있다면 그 배열에 도구를 추가해야 합니다.
+한 scope에서 `allow`와 `alsoAllow`를 함께 사용할 수는 없습니다.
+
+Sandbox tool policy는 별도 gate입니다. Sandbox를 사용하는 agent는 plugin id
+`slack-block-kit`을 `tools.sandbox.tools.alsoAllow` 또는 기존 sandbox `allow` 배열에서 따로
+허용해야 합니다. 모든 plugin tool을 허용할 때만 `group:plugins`를 사용하세요.
+Agent·provider·sandbox별 policy는 [OpenClaw tool profile과
 policy](https://docs.openclaw.ai/gateway/config-tools)를 참고하세요.
 
 </details>
