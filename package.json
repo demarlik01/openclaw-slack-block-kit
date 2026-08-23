@@ -1,6 +1,6 @@
 {
   "name": "openclaw-slack-block-kit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Send rich Slack Block Kit messages to the current Slack conversation",
   "license": "MIT",
   "author": "demarlik01",
