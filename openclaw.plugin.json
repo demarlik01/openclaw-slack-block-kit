@@ -2,7 +2,7 @@
   "id": "slack-block-kit",
   "name": "Slack Block Kit",
   "description": "Send rich Slack Block Kit messages to the current Slack conversation",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "configSchema": {
     "type": "object",
     "properties": {},
