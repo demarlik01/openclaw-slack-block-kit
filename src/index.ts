@@ -1,5 +1,4 @@
 import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
-import { registerCompletionHooks } from "./completion.js";
 import { SlackSendBlocksSchema } from "./schema.js";
 import {
   SLACK_SEND_BLOCKS_DESCRIPTION,
@@ -28,11 +27,5 @@ const plugin = defineToolPlugin({
     }),
   ],
 });
-
-const registerTools = plugin.register.bind(plugin);
-plugin.register = (api) => {
-  registerTools(api);
-  registerCompletionHooks(api);
-};
 
 export default plugin;

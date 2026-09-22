@@ -14,7 +14,7 @@ import {
 } from "../src/tool-copy.js";
 
 describe("tool plugin metadata", () => {
-  it("preserves defineToolPlugin metadata after decorating register", () => {
+  it("exposes the canonical defineToolPlugin metadata", () => {
     const metadata = getToolPluginMetadata(plugin);
 
     expect(metadata).toBeDefined();
@@ -31,17 +31,23 @@ describe("tool plugin metadata", () => {
     expect(plugin.register).toBeTypeOf("function");
   });
 
-  it("registers as default-visible and gates the runtime factory to Slack", () => {
+  it("registers only the default-visible Slack tool without host hooks", () => {
     const registerTool = vi.fn();
     const api = {
       registerTool,
       on: vi.fn(),
+      registerHook: vi.fn(),
       lifecycle: { registerRuntimeLifecycle: vi.fn() },
     } as unknown as OpenClawPluginApi;
 
     plugin.register(api);
 
     expect(registerTool).toHaveBeenCalledOnce();
+    // Slack disables progress streaming when a global send hook is present,
+    // even if that hook would only act on a final after a successful tool send.
+    expect(api.on).not.toHaveBeenCalled();
+    expect(api.registerHook).not.toHaveBeenCalled();
+    expect(api.lifecycle.registerRuntimeLifecycle).not.toHaveBeenCalled();
     const [factory, options] = registerTool.mock.calls[0] as unknown as [
       (context: OpenClawPluginToolContext) => unknown,
       Record<string, unknown>,
