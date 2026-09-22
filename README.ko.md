@@ -59,8 +59,11 @@ slack_send_blocks를 사용해서 아래 후보들을 이미지 카드로 현재
 지정할 수는 없습니다. 다른 채널이나 스레드로 보내려면 OpenClaw 기본 `message` 도구를
 사용하세요.
 
-전송에 성공하면 보통 Block Kit 메시지 자체가 최종 답변이며, 일반 텍스트 답변이 중복으로
-붙지 않습니다. 각 메시지에는 Slack 알림과 접근성을 위한 fallback text가 포함됩니다.
+모든 메시지 전송에 성공하면 Block Kit 메시지 자체가 최종 답변이며, 도구는 에이전트에게
+정확히 `NO_REPLY`로 마무리하도록 지시합니다. 중복 답변 방지는 에이전트의 지시 준수에
+의존합니다. 이 플러그인은 진행 표시나 최종 답변 전송에 개입하는 훅을 등록하지 않으므로,
+에이전트가 지시를 어기면 일반 텍스트 답변이 추가될 수 있습니다. 각 메시지에는 Slack 알림과
+접근성을 위한 fallback text가 포함됩니다.
 
 ## 지원 범위
 
@@ -219,7 +222,6 @@ openclaw plugins enable slack-block-kit
 ```bash
 pnpm typecheck
 pnpm test
-pnpm verify:completion
 pnpm plugin:metadata-check
 pnpm plugin:validate
 npm pack --dry-run

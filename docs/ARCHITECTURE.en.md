@@ -44,8 +44,8 @@ current-channel, account, and thread context and durable outbound path.
 - Perform minimum structural, resource, and security validation before sending
 - Return distinct validated, sent, suppressed, partial_suppressed, incomplete_sent, partial_failed,
   and failed results
-- Suppress duplicate plain-text final responses after a successful direct send on paths that have
-  automatic final delivery and exact `runId` metadata
+- Instruct the agent to finish with exactly `NO_REPLY` after every message is successfully sent
+- Preserve OpenClaw progress and final-response handling without registering global send hooks
 
 ### Non-goals
 
@@ -194,21 +194,16 @@ failed indexes.
 
 ## 6. Plugin Registration
 
-This project exposes a default-visible Slack-only tool as its primary surface and also registers
-narrowly scoped hooks that handle only completion after a successful direct send. It uses
-`defineToolPlugin` for the tool declaration and generated manifest metadata.
+This project registers one default-visible Slack-only tool. It uses `defineToolPlugin` for the tool
+declaration and generated manifest metadata. It registers no send hooks, tool-completion observers,
+or lifecycle handlers for completion-state cleanup.
 
 ```text
-plugin.register
-  ├─ defineToolPlugin.register
-  │    └─ static tool: slack_send_blocks (default-visible)
-  │         └─ factory(toolContext)
-  │              ├─ returns null unless the surface is Slack
-  │              └─ on Slack, returns a tool that captures the current deliveryContext
-  └─ registerCompletionHooks
-       ├─ after_tool_call: observe exact run/tool completion
-       ├─ reply_payload_sending: cancel only an eligible plain-text final
-       └─ gateway/lifecycle cleanup: clear bounded markers
+plugin.register (defineToolPlugin)
+  └─ static tool: slack_send_blocks (default-visible)
+       └─ factory(toolContext)
+            ├─ returns null unless the surface is Slack
+            └─ on Slack, returns a tool that captures the current deliveryContext
 ```
 
 `openclaw plugins build` generates the following manifest metadata.
@@ -373,96 +368,46 @@ Adding raw interactions in v2 requires all of the following.
 - Define message-update and ephemeral-error policies
 - Start with static selects and keep external selects in a separate scope
 
-## 11. Duplicate Final-response Suppression
+## 11. Final-response Contract
 
-The raw Block Kit send is itself the user-visible final result. A successful actual send prevents a
-duplicate ordinary response through two layers.
+The raw Block Kit send is itself the user-visible final result. Preventing a duplicate ordinary
+response relies on the agent following the `NO_REPLY` instruction.
 
-1. Tool result
-   - Every result has `terminate: false`.
-   - Only a `sent` result with platform receipts confirmed for every payload requires the exact
-     `NO_REPLY` through `nextAction`.
-2. Delivery safety hook
-   - `after_tool_call` observes every tool completion in the same run. An observation counts as a
-     complete Slack send only when both the event and context `toolName` equal exactly
-     `slack_send_blocks`, `event.error` is absent, and the result has `ok: true`, `status: sent`, and
-     `complete: true`.
-   - A run is eligible for suppression only when every deduplicated call observation is a complete
-     Slack send.
-   - Other-tool, validation-only, failed, and partially successful observations do not count as
-     complete Slack sends.
-   - Because the harness and native relay may emit multiple observations of one physical call, the
-     exact `toolCallId` is the idempotency key. Per-observation decisions are OR-merged within the
-     same call ID, so a confirmed complete send wins. This merges distinct observations and does not
-     relax the single-observation conditions above. Distinct call IDs must each be true, so success
-     under a new call ID does not overwrite an existing false call ID.
-   - Without a call ID, duplicate observations cannot be identified, so unkeyed observations are
-     merged with sticky AND semantics. A sole unkeyed complete send can remain eligible, but any
-     unkeyed observation that is not a complete send makes the run ineligible for its TTL.
-   - Conflicting event/context call IDs are treated as an unkeyed ineligible observation and fail
-     open.
-   - If the event and context both provide different `runId` values, or no exact `runId` exists, the
-     observation is not recorded.
-   - The plugin-owned `Map` has a five-minute TTL and limits of 1,024 runs and 256 exact call IDs per
-     run; it does not use a session key as fallback correlation. Exceeding the call-ID limit makes
-     the run fail open.
-   - For the same exact `runId`, cancel at low priority only non-empty plain text in a Slack
-     `reply_payload_sending(kind=final)`. If the event/context channels conflict or are not Slack,
-     always allow the payload through.
-   - A final can be split into multiple payloads, so the marker is not consumed after the first
-     cancellation.
-   - Error, fallback/compaction/status, reasoning/commentary, media/presentation/interactive,
-     channel-specific, empty-text, and unknown future payloads all fail open.
-   - `replyToId`, `replyToTag`, and `replyToCurrent` are allowed as plain-text reply metadata keys
-     regardless of value. Only host-normalized `mediaUrl: null`/undefined,
-     `mediaUrls: []`/undefined, and `audioAsVoice: false`/undefined are treated as empty/default
-     media metadata. Non-empty media and `audioAsVoice: true` continue to fail open.
-   - Markers are cleared by TTL/capacity pruning, Gateway stop, or the plugin runtime lifecycle
-     cleanup callback.
+- The tool description instructs the agent to call this tool alone as the last tool call of the turn.
+- Only `ok: true`, `status: sent`, `complete: true` results request exactly `NO_REPLY` through
+  `nextAction`. The model finishes normally with that silent final and no additional text.
+- Validation-only, failed, partial, suppressed, and incomplete outcomes contain no silent-final
+  instruction. The agent can explain the outcome or perform recovery.
+- Every result has `terminate: false`, allowing the model to finish normally instead of forcing the
+  run to end inside the tool.
 
-The evidentiary boundary of these two layers depends on the source delivery mode.
+The plugin stores no completion markers after delivery and never cancels final responses. If the
+agent ignores `NO_REPLY`, an additional plain-text response can appear; duplicate prevention is not
+guaranteed by code. OpenClaw manages progress, commentary, errors, and final-response delivery.
 
-| source delivery mode | ordinary model final path | What can be verified |
-|---|---|---|
-| `message_tool_only` | Ordinary finals are not automatically delivered to the external source | A live smoke test verifies the actual Block Kit send, route/thread inheritance, rendering, and normal run completion. The absence of a visible duplicate message alone does not prove hook cancellation. |
-| automatic delivery + exact run metadata | The final passes through `reply_payload_sending` on its way to the adapter | An intentionally generated plain final can verify the live hook E2E. |
-| missing or conflicting run/channel metadata | The hook safely fails open | Relies on the `NO_REPLY` model contract and does not hide diagnostic/recovery finals. |
+OpenClaw `2026.9.4` Slack handling disables `progress` streaming when any global
+`reply_payload_sending` or `message_sending` hook exists. Restricting a hook's callback to finals
+does not avoid this registration-level effect, so this plugin registers neither hook. Other
+plugins' send hooks and host settings can still affect progress visibility.
 
-Separately from the first live smoke test, `pnpm verify:completion` reconstructs the relay shape
-observed in production inside a fresh process. It uses the real global hook runner and outbound
-pipeline and asserts one hook invocation, one cancellation, and zero Slack adapter calls. It is
-therefore regression evidence for the safety hook itself. The probe does not execute
-`slack_send_blocks` or perform a real Slack send. It seeds the registered `after_tool_call` handler
-with a synthetic complete-send result and proves only that a plain final is cancelled before the
-adapter tripwire.
-
-`api.runContext` is cleared when the run ends and may disappear before the outer final delivery
-hook, so it is not used as the correlation store. This hook is only a last-resort safety net for the
-live dispatcher when exact run metadata is available. Paths without run metadata, such as durable
-route/follow-up delivery, rely on the tool result's `NO_REPLY` contract. When event/context run or
-session information conflicts, or when the marker has expired, the hook also fails open and sends
-the final.
-
-This design corrects a problem observed in an OpenClaw `2026.7.1-2` live smoke test. A custom tool's
-`terminate: true` was not counted as completion of core message delivery, so the run could end as
-`incomplete_turn / abandoned` and send an additional `Agent couldn't generate a response` message.
-Instead of relying on `terminate`, the normal silent-final path is allowed to complete; if the model
-violates the contract, the hook remains a safety net that blocks only the plain-text duplicate final
-in a Slack-only run.
+An earlier OpenClaw `2026.7.1-2` live smoke test found that a custom tool's `terminate: true` was not
+counted as normal response completion, resulting in `incomplete_turn / abandoned` and a fallback
+error. Removing the hooks therefore preserves `terminate: false` and the successful-send
+`NO_REPLY` contract.
 
 ## 12. Error and Durability Model
 
 The tool distinguishes the following states.
 
-| Status | Meaning | Completion marker / model follow-up |
+| Status | Meaning | Model follow-up |
 |---|---|---|
-| `validated` | Validation completed; no external send | None / normal response |
-| `sent` | Platform receipts confirmed for every payload (`complete: true`) | Recorded / `NO_REPLY` |
-| `partial_suppressed` | Some payloads sent and others suppressed by hook cancellation, empty payloads, or a missing identifiable receipt | None / explain and recover |
-| `incomplete_sent` | Top-level send succeeded, but completion of every payload could not be proven | None / explain and recover |
-| `suppressed` | Durable delivery produced no identifiable visible-delivery result (for example hook cancellation, an empty payload, or `adapter_returned_no_identity`) | None / explain and recover |
-| `partial_failed` | A later payload failed after some payloads were sent | None / explain and recover |
-| `failed` | Failed without a platform receipt | None / explain and recover |
+| `validated` | Validation completed; no external send | normal response |
+| `sent` | Platform receipts confirmed for every payload (`complete: true`) | `NO_REPLY` |
+| `partial_suppressed` | Some payloads sent and others suppressed by hook cancellation, empty payloads, or a missing identifiable receipt | explain and recover |
+| `incomplete_sent` | Top-level send succeeded, but completion of every payload could not be proven | explain and recover |
+| `suppressed` | Durable delivery produced no identifiable visible-delivery result (for example hook cancellation, an empty payload, or `adapter_returned_no_identity`) | explain and recover |
+| `partial_failed` | A later payload failed after some payloads were sent | explain and recover |
+| `failed` | Failed without a platform receipt | explain and recover |
 
 In every state, the tool result contains JSON text in `content`, the same object in `details`, and
 `terminate: false`. The principal result shapes are:
@@ -517,20 +462,17 @@ openclaw-slack-block-kit/
 │   ├── ARCHITECTURE.en.md    # maintained normative English translation
 │   └── images/               # README Before/After screenshots
 ├── scripts/
-│   ├── normalize-package-modes.mjs    # normalize npm tarball file modes
-│   └── verify-completion-pipeline.mjs # fresh-process completion probe
+│   └── normalize-package-modes.mjs    # normalize npm tarball file modes
 ├── src/
 │   ├── index.ts              # defineToolPlugin entry
 │   ├── tool.ts               # current-route durable tool
 │   ├── tool-copy.ts          # model-facing tool copy and Slack reference URL
-│   ├── completion.ts         # exact-run final completion safety net
 │   ├── schema.ts             # TypeBox envelope
 │   ├── validator.ts          # minimum guard validation
 │   ├── errors.ts             # safe error normalization
 │   └── types.ts              # input and validation types
 ├── test/
 │   ├── metadata.test.ts      # plugin metadata/manifest contract
-│   ├── completion.test.ts    # run correlation, fail-open, bounded cleanup
 │   ├── schema-copy.test.ts   # prevent schema-description drift
 │   ├── tool-copy.test.ts     # pin required model-facing selection/completion copy
 │   ├── tool.test.ts          # route, durable outcome, silent-final result
@@ -549,8 +491,7 @@ openclaw-slack-block-kit/
 
 ### Unit Tests
 
-The current baseline is 60 passing tests across six test files. The list below is the contract those
-tests currently cover; when behavior changes, update both the count and the acceptance list.
+The five test files cover the contracts below. Update the acceptance list when behavior changes.
 
 - Return `null` from the tool factory outside Slack and the canonical tool on Slack turns
 - Keep permission-level `optional` absent from runtime and generated manifest metadata, with
@@ -564,16 +505,8 @@ tests currently cover; when behavior changes, update both the count and the acce
 - Reject v1 interactions and input blocks
 - Map sent/incomplete_sent/suppressed/partial_suppressed/partial_failed/failed results
 - Return `terminate: false` for every tool result
-- Create a `NO_REPLY` next action and exact-run completion eligibility only for fully successful
-  Slack-only runs
-- Accept an observation only when event/context both name exactly `slack_send_blocks`, no event
-  error is present, and the result is a complete send
-- OR-merge multiple observations with the same `toolCallId` idempotently; require each distinct call
-  ID to be true and combine unkeyed observations with sticky AND
-- Fail open for missing/mismatched run metadata, conflicting tool-call IDs, session/channel
-  conflicts, non-Slack, host notices, and rich/unknown/error finals
-- Suppress multiple final chunks; enforce marker TTL, maximum run/call-ID counts, and lifecycle
-  cleanup
+- Return a `NO_REPLY` next action only after every message is successfully sent
+- Register only the tool, with no typed/legacy hooks or runtime lifecycle handlers
 - Treat an empty `payloadOutcomes` array as the legacy flat-results shape, and never leave an
   incomplete send silent
 - Reject non-string, empty, and non-HTTPS URL-bearing fields
@@ -584,7 +517,6 @@ tests currently cover; when behavior changes, update both the count and the acce
 pnpm build
 pnpm typecheck
 pnpm test
-pnpm verify:completion
 pnpm plugin:metadata-check
 pnpm plugin:validate
 npm pack --dry-run
@@ -597,28 +529,20 @@ The metadata check and validation must detect generated manifest drift and verif
 
 Do not restart the production Gateway during iterative development.
 
-1. Reconstruct the event/context field shape observed in production live logs as a synthetic
-   fixture.
-2. In the fresh process used by `pnpm verify:completion`, populate the completion store through the
-   registered `after_tool_call` handler, then verify that a normalized plain-text final passes
-   through the real OpenClaw global hook runner and outbound delivery pipeline and is cancelled
-   before the platform adapter. Bootstrap has an empty payload, so its send loop executes zero
-   times. The main verification uses the public `deps.slack` test double as a tripwire and asserts
-   one hook invocation, one cancellation, and zero adapter calls; `skipQueue` also omits durable
-   queue writes.
-3. In a fresh process, confirm the current `dist/` registration with
-   `openclaw plugins inspect slack-block-kit --runtime`.
-4. Use `openclaw agent --local` with a unique session key and a `validateOnly` turn to verify the
-   actual embedded harness, native relay, tool loop, and normal stop. Do not use `--deliver`.
-5. Only when a complete-send verification is required, run a local-delivery smoke test against an
-   explicit Slack test channel. This path verifies only tool outbound behavior and Slack rendering;
-   it does not verify final suppression because the current agent-command delivery does not pass
-   `replyPayloadSendingHook` metadata.
-6. After all offline/fresh-process checks and independent review have completed, restart the
-   production Gateway exactly once. First determine the source delivery mode, then perform only the
-   live gate that mode can prove. Under `message_tool_only`, verify send/route/thread/rendering/run
-   completion. Claim live E2E verification of the duplicate-final hook only when automatic final
-   delivery and exact run metadata are both present.
+1. Run the build, typecheck, full test suite, and manifest checks. Registration tests verify tool
+   exposure and the absence of typed/legacy hooks and runtime lifecycle handlers.
+2. To check compatibility with an installed host, load the built entry in an isolated fresh process
+   and use a fake registration API to verify one tool and zero hooks. Do not modify production
+   configuration or session databases.
+3. Use tool tests with an injected sender to verify route/thread inheritance, unchanged blocks,
+   delivery outcomes, and `NO_REPLY` only after complete success. These tests send nothing to Slack.
+4. Once production rollout is authorized, install the verified build and restart the Gateway once.
+   With the plugin enabled, verify progress and final results in Slack for requests both with and
+   without Block Kit tool calls.
+
+Verifying that no hooks are registered proves that this plugin does not introduce the known
+progress blocker. It does not prove live progress rendering or the agent's compliance with
+`NO_REPLY`.
 
 Changing `plugins.entries.slack-block-kit.enabled` produces a config hot-reload log, but does not
 replace an already imported ESM plugin module with new code. Therefore, do not treat an off/on
@@ -633,10 +557,11 @@ toggle as evidence of code reload.
 5. Confirm the order of a two-message batch.
 6. Use a payload that passes local guards but Slack rejects semantically to confirm
    `SLACK_API_ERROR` normalization.
-7. Confirm that no duplicate plain final reply appears after a direct send, and record the source
+7. Confirm that the agent finishes with `NO_REPLY` after a complete send, and record the source
    delivery mode with the result.
 8. Confirm that an automatically delivered run finishes without `incomplete_turn / abandoned` and
    that no fallback error message appears.
+9. With the plugin enabled, verify progress and final results both with and without tool use.
 
 On a successful run where an exact `NO_REPLY` produces zero visible finals, OpenClaw diagnostics may
 record `zero-count-visible-dispatch`. This is expected and is not a smoke-test failure when no
@@ -656,7 +581,7 @@ release-checklist item.
 - Minimal guard validator
 - `sendDurableMessageBatch`
 - Structured partial outcomes
-- Complete-send `NO_REPLY` plus bounded Slack-only exact-run plain-text suppression
+- Complete-send `NO_REPLY` instruction, without send hooks or a completion store
 
 ### v1.1 — producer integration
 
@@ -687,11 +612,12 @@ plugin.
 Accepted. Use the core `presentation` path whenever the content can be expressed through the shared
 representation.
 
-### ADR-002: explicit tool, narrowly scoped final-delivery safety hook
+### ADR-002: explicit tool, agent-owned silent final
 
-Accepted. Call the explicit tool only when needed instead of transforming every final response. The
-global `reply_payload_sending` hook narrowly cancels only a complete Slack-only exact-run's
-plain-text duplicate final and fails open for metadata conflicts, diagnostics, and rich payloads.
+Accepted. Call the explicit tool when needed and let the agent finish with `NO_REPLY` after every
+message is successfully sent. Register no global send hooks and keep no completion markers. Accept
+that an agent ignoring the instruction can produce a duplicate reply, while leaving OpenClaw
+progress and ordinary response delivery to the host.
 
 ### ADR-003: current-route only
 

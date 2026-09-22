@@ -61,9 +61,12 @@ The message is always sent back to the Slack channel, DM, or thread where the re
 started. The tool cannot redirect it to another destination. For a different channel
 or thread, use OpenClaw's core `message` tool.
 
-After a successful send, the Block Kit message is normally the final answer, without a
-duplicate plain-text reply. Each message still includes fallback text for Slack
-notifications and accessibility.
+After every message is successfully sent, the Block Kit message is the final answer,
+and the tool instructs the agent to finish with exactly `NO_REPLY`. Duplicate prevention
+depends on the agent following that instruction. This plugin registers no hooks that
+intercept progress or final delivery, so an additional plain-text reply is possible if
+the agent ignores it. Each message includes fallback text for Slack notifications and
+accessibility.
 
 ## What it supports
 
@@ -227,7 +230,6 @@ Run the release checks with:
 ```bash
 pnpm typecheck
 pnpm test
-pnpm verify:completion
 pnpm plugin:metadata-check
 pnpm plugin:validate
 npm pack --dry-run
